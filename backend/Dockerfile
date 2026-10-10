@@ -12,6 +12,8 @@ RUN npx prisma generate
 
 COPY tsconfig*.json ./
 COPY src ./src
+# PDF report font (Azerbaijani glyphs) must be present at runtime.
+COPY assets ./assets
 RUN npm run build
 
 # Reinstall without dev dependencies for the runtime image.
