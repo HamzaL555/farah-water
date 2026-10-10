@@ -33,7 +33,7 @@ import type {
  *   - Production        -> https://your-domain.com/api/v1
  * See README.md ("Server ünvanını dəyişmək").
  */
-export const API_BASE_URL = 'http://10.0.2.2:4000/api/v1';
+export const API_BASE_URL = 'https://pos-date-tyler-decimal.trycloudflare.com/api/v1';
 
 export interface ApiEnvelope<T> {
   data: T;
