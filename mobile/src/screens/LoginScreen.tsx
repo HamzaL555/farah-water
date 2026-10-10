@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Pressable } from 'react-native';
-import { Button, TextInput as PaperInput, HelperText, Snackbar, IconButton, Icon } from 'react-native-paper';
+import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { Button, TextInput as PaperInput, HelperText, Snackbar, IconButton } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { colors, spacing, radius } from '../theme';
@@ -95,17 +95,17 @@ export const LoginScreen: React.FC = () => {
             error={Boolean(passwordError)}
             style={styles.input}
             testID="login-password"
-            // Pressable wrapper: Paper's Icon is display-only, so it cannot
-            // host the tap handler that the eye toggle needs.
+            // TextInput.Icon is Paper's built-in trailing adornment: it is laid
+            // out and sized by the input itself, and it accepts onPress - so
+            // the tap target is correct and the glyph is never clipped.
             right={
-              <Pressable
+              <PaperInput.Icon
+                icon={secure ? 'eye' : 'eye-off'}
                 onPress={() => setSecure((s) => !s)}
-                style={styles.eyeButton}
+                forceTextInputFocus={false}
                 accessibilityLabel={secure ? 'Şifrəni göstər' : 'Şifrəni gizlət'}
                 testID="toggle-password-visibility"
-              >
-                <Icon source={secure ? 'eye' : 'eye-off'} size={20} />
-              </Pressable>
+              />
             }
           />
           {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
@@ -169,7 +169,6 @@ const styles = StyleSheet.create({
   },
   offlineText: { color: colors.warning, fontSize: 12, textAlign: 'center' },
   input: { marginTop: spacing.sm, backgroundColor: colors.surface },
-  eyeButton: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, justifyContent: 'center' },
   button: { marginTop: spacing.lg },
   buttonContent: { height: 48 },
   helpRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },

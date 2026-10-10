@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Searchbar, Button, ActivityIndicator, SegmentedButtons, Divider } from 'react-native-paper';
+import { Searchbar, Button, ActivityIndicator, SegmentedButtons } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DeliveryRow } from '../components/DeliveryRow';
 import { EmptyState } from '../components/EmptyState';

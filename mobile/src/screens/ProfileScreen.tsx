@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, Text } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Button, Dialog, Portal, TextInput as PaperInput, HelperText, Snackbar, Chip, Switch } from 'react-native-paper';
+import { Button, Dialog, Portal, TextInput as PaperInput, HelperText, Snackbar, Chip } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SectionCard } from '../components/SectionCard';
 import { KeyValueRow } from '../components/KeyValueRow';

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text, Share, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Button, ActivityIndicator, SegmentedButtons, Chip, Snackbar } from 'react-native-paper';
+import { Button, ActivityIndicator, Chip, Snackbar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { EmptyState } from '../components/EmptyState';
 import { SectionCard } from '../components/SectionCard';
@@ -9,10 +9,9 @@ import { useAsync, useSubmit } from '../hooks/useAsync';
 import { reportsApi } from '../services/endpoints';
 import { formatDate } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
-import type { DateRangePreset, Report } from '../types';
+import type { DateRangePreset } from '../types';
 
 type ReportType = 'daily' | 'period' | 'worker' | 'customer' | 'inventory' | 'payments' | 'deliveries';
-type Format = 'json' | 'csv' | 'pdf';
 
 const TYPES: Array<{ value: ReportType; label: string }> = [
   { value: 'daily', label: 'Günlük' },
@@ -43,7 +42,6 @@ const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
 export const ReportsScreen: React.FC = () => {
   const [type, setType] = useState<ReportType>('daily');
   const [preset, setPreset] = useState<DateRangePreset>('today');
-  const [format, setFormat] = useState<Format>('json');
   const [snack, setSnack] = useState<string | null>(null);
 
   const { data, loading, error, run } = useAsync(

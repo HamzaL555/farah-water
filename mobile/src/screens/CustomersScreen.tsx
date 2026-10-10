@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, RefreshControl, FlatList, Text, Pressable } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Searchbar, Button, ActivityIndicator, FAB, Chip } from 'react-native-paper';
+import { Searchbar, ActivityIndicator, FAB, Chip } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { EmptyState } from '../components/EmptyState';
 import { useAsync } from '../hooks/useAsync';

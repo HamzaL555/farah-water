@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button, ActivityIndicator, Divider } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,7 +18,7 @@ import type { AdminStackParamList } from '../navigation/types';
 type Props = NativeStackScreenProps<AdminStackParamList, 'CustomerDetail'>;
 
 /** Customer profile: totals plus their delivery history. */
-export const CustomerDetailScreen: React.FC<Props> = ({ route, navigation }) => {
+export const CustomerDetailScreen: React.FC<Props> = ({ route }) => {
   const { customerId } = route.params;
 
   const { data, loading, error, run } = useAsync(

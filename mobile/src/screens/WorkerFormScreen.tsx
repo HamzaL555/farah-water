@@ -14,7 +14,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAsync, useSubmit } from '../hooks/useAsync';
 import { usersApi } from '../services/endpoints';
-import { normalizeMoneyInput, parseMoneyInput } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
 import type { AdminStackParamList } from '../navigation/types';
 
@@ -222,8 +221,16 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
         </Dialog>
       </Portal>
 
-      <Snackbar visible={Boolean(snack)} onDismiss={() => setSnack(null)} duration={3000}>
-        {snack ?? ''}
+      <Snackbar
+        visible={Boolean(snack ?? error)}
+        onDismiss={() => {
+          setSnack(null);
+          createAction.clearError();
+          updateAction.clearError();
+        }}
+        duration={5000}
+      >
+        {snack ?? error ?? ''}
       </Snackbar>
     </SafeAreaView>
   );

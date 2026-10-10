@@ -22,7 +22,7 @@ type Mode = 'deliveries' | 'payments' | 'inventory';
 /** Admin audit view for one worker: activity, money and stock. */
 export const WorkerDetailScreen: React.FC<Props> = ({ route }) => {
   const navigation = useNavigation<Nav>();
-  const { workerId, workerName } = route.params;
+  const { workerId } = route.params;
   const [mode, setMode] = useState<Mode>('deliveries');
   const [search, setSearch] = useState('');
 

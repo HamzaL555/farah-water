@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useTheme } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
+import { TabIcon } from '../components/TabIcon';
 import { LoginScreen } from '../screens/LoginScreen';
 import { WorkerHomeScreen } from '../screens/WorkerHomeScreen';
 import { NewDeliveryScreen } from '../screens/NewDeliveryScreen';
@@ -33,44 +35,93 @@ const WorkerStack = createNativeStackNavigator<WorkerStackParamList>();
 const AdminTab = createBottomTabNavigator<AdminTabParamList>();
 const AdminStack = createNativeStackNavigator<AdminStackParamList>();
 
-/** Simple text glyphs keep the bundle free of an icon-font dependency. */
-const TabIcon: React.FC<{ glyph: string; focused: boolean }> = ({ glyph, focused }) => (
-  <View style={styles.tabIconWrap}>
-    <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
-      <View style={[styles.tabDot, { backgroundColor: focused ? colors.white : colors.textMuted }]} />
-      <View style={[styles.tabDot, { backgroundColor: focused ? colors.white : colors.textMuted }]} />
-      <View style={[styles.tabDot, { backgroundColor: focused ? colors.white : colors.textMuted }]} />
-    </View>
-  </View>
-);
+/** Icon tint for a tab sitting on the primary-coloured bar. */
+const ACTIVE_TINT = colors.white;
+const INACTIVE_TINT = '#BBD7E8';
+
+/**
+ * Tabs render at the TOP, directly under the screen header.
+ * `tabBarPosition: 'top'` + `tabBarLabelPosition: 'below-icon'` puts the icon
+ * above the label, which is how operators scan the bar.
+ */
+const tabScreenOptions = {
+  tabBarPosition: 'top' as const,
+  tabBarLabelPosition: 'below-icon' as const,
+  headerStyle: { backgroundColor: colors.primary },
+  headerTitleStyle: { color: colors.white, fontWeight: '700' as const },
+  headerTintColor: colors.white,
+  tabBarActiveTintColor: ACTIVE_TINT,
+  tabBarInactiveTintColor: INACTIVE_TINT,
+  tabBarStyle: {
+    backgroundColor: colors.primary,
+    borderBottomColor: colors.primaryDark,
+    borderBottomWidth: 1,
+    elevation: 3,
+  },
+  tabBarLabelStyle: { fontSize: 10, fontWeight: '600' as const, marginTop: 0, marginBottom: 6 },
+  tabBarIconStyle: { marginTop: 0, marginBottom: 0 },
+  tabBarItemStyle: { paddingVertical: 6 },
+} as const;
 
 const WorkerTabs: React.FC = () => (
-  <WorkerTab.Navigator
-    screenOptions={{
-      headerStyle: { backgroundColor: colors.primary },
-      headerTitleStyle: { color: colors.white, fontWeight: '700' },
-      headerTintColor: colors.white,
-      tabBarActiveTintColor: colors.primary,
-      tabBarInactiveTintColor: colors.textMuted,
-      tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 58, paddingBottom: 6 },
-      tabBarLabelStyle: { fontSize: 10 },
-    }}
-  >
+  <WorkerTab.Navigator screenOptions={tabScreenOptions}>
     <WorkerTab.Screen
       name="Home"
       component={WorkerHomeScreen}
-      options={{ title: 'Ana səhifə', tabBarIcon: ({ focused }) => <TabIcon glyph="home" focused={focused} /> }}
+      options={{
+        title: 'Ana səhifə',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="home" color={color} focused={focused} />,
+      }}
     />
     <WorkerTab.Screen
       name="NewDelivery"
       component={NewDeliveryScreen}
-      options={{ title: 'Yeni çatdırılma', tabBarIcon: ({ focused }) => <TabIcon glyph="plus" focused={focused} /> }}
+      options={{
+        title: 'Yeni çatdırılma',
+        tabBarLabel: 'Çatdırılma',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="plus-circle" color={color} focused={focused} />,
+      }}
     />
-    <WorkerTab.Screen name="Customers" component={CustomersScreen} options={{ title: 'Müştərilər' }} />
-    <WorkerTab.Screen name="Debts" component={DebtsScreen} options={{ title: 'Borc' }} />
-    <WorkerTab.Screen name="Bottles" component={BottlesScreen} options={{ title: 'Bidonlar' }} />
-    <WorkerTab.Screen name="History" component={HistoryScreen} options={{ title: 'Tarixçə' }} />
-    <WorkerTab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profil' }} />
+    <WorkerTab.Screen
+      name="Customers"
+      component={CustomersScreen}
+      options={{
+        title: 'Müştərilər',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="account-group" color={color} focused={focused} />,
+      }}
+    />
+    <WorkerTab.Screen
+      name="Debts"
+      component={DebtsScreen}
+      options={{
+        title: 'Borc',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="alert-circle" color={color} focused={focused} />,
+      }}
+    />
+    <WorkerTab.Screen
+      name="Bottles"
+      component={BottlesScreen}
+      options={{
+        title: 'Bidonlar',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="bottle-soda-outline" color={color} focused={focused} />,
+      }}
+    />
+    <WorkerTab.Screen
+      name="History"
+      component={HistoryScreen}
+      options={{
+        title: 'Tarixçə',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="history" color={color} focused={focused} />,
+      }}
+    />
+    <WorkerTab.Screen
+      name="Profile"
+      component={ProfileScreen}
+      options={{
+        title: 'Profil',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="account" color={color} focused={focused} />,
+      }}
+    />
   </WorkerTab.Navigator>
 );
 
@@ -91,26 +142,79 @@ const WorkerNavigation: React.FC = () => (
 );
 
 const AdminTabs: React.FC = () => (
-  <AdminTab.Navigator
-    screenOptions={{
-      headerStyle: { backgroundColor: colors.primary },
-      headerTitleStyle: { color: colors.white, fontWeight: '700' },
-      headerTintColor: colors.white,
-      tabBarActiveTintColor: colors.primary,
-      tabBarInactiveTintColor: colors.textMuted,
-      tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 58, paddingBottom: 6 },
-      tabBarLabelStyle: { fontSize: 10 },
-    }}
-  >
-    <AdminTab.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Dashboard', tabBarIcon: ({ focused }) => <TabIcon glyph="home" focused={focused} /> }} />
-    <AdminTab.Screen name="Workers" component={WorkersScreen} options={{ title: 'İşçilər' }} />
-    <AdminTab.Screen name="Debts" component={DebtsScreen} options={{ title: 'Borclar' }} />
-    <AdminTab.Screen name="Revenue" component={RevenueScreen} options={{ title: 'Gəlirlər' }} />
-    <AdminTab.Screen name="Deliveries" component={AdminDeliveriesScreen} options={{ title: 'Çatdırılma' }} />
-    <AdminTab.Screen name="Warehouse" component={WarehouseScreen} options={{ title: 'Anbar' }} />
-    <AdminTab.Screen name="Reports" component={ReportsScreen} options={{ title: 'Hesabat' }} />
-    <AdminTab.Screen name="AuditLog" component={AuditLogScreen} options={{ title: 'Audit' }} />
-    <AdminTab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profil' }} />
+  <AdminTab.Navigator screenOptions={tabScreenOptions}>
+    <AdminTab.Screen
+      name="AdminHome"
+      component={AdminHomeScreen}
+      options={{
+        title: 'Dashboard',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="view-dashboard" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Workers"
+      component={WorkersScreen}
+      options={{
+        title: 'İşçilər',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="account-group" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Debts"
+      component={DebtsScreen}
+      options={{
+        title: 'Borclar',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="cash-multiple" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Revenue"
+      component={RevenueScreen}
+      options={{
+        title: 'Gəlirlər',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="chart-bar" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Deliveries"
+      component={AdminDeliveriesScreen}
+      options={{
+        title: 'Çatdırılma',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="truck-delivery-outline" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Warehouse"
+      component={WarehouseScreen}
+      options={{
+        title: 'Anbar',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="warehouse" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Reports"
+      component={ReportsScreen}
+      options={{
+        title: 'Hesabat',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="file-chart" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="AuditLog"
+      component={AuditLogScreen}
+      options={{
+        title: 'Audit',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="shield-check" color={color} focused={focused} />,
+      }}
+    />
+    <AdminTab.Screen
+      name="Profile"
+      component={ProfileScreen}
+      options={{
+        title: 'Profil',
+        tabBarIcon: ({ focused, color }) => <TabIcon name="account" color={color} focused={focused} />,
+      }}
+    />
   </AdminTab.Navigator>
 );
 
@@ -135,7 +239,7 @@ const AdminNavigation: React.FC = () => (
 /** Role-based root switch: admin and worker get entirely different navigators. */
 export const RootNavigator: React.FC = () => {
   const { user, booting } = useAuth();
-  const paperTheme = useTheme();
+  useTheme(); // ensures Paper's theme context is resolved before first render
 
   const navTheme = {
     ...DefaultTheme,
@@ -152,9 +256,9 @@ export const RootNavigator: React.FC = () => {
 
   if (booting) {
     return (
-      <View style={styles.splash}>
+      <SafeAreaView style={styles.splash}>
         <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -167,18 +271,4 @@ export const RootNavigator: React.FC = () => {
 
 const styles = StyleSheet.create({
   splash: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
-  tabIconWrap: { alignItems: 'center', justifyContent: 'center' },
-  tabIcon: {
-    width: 20,
-    height: 18,
-    borderRadius: 4,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 2,
-    opacity: 0.9,
-  },
-  tabIconActive: { backgroundColor: colors.primary },
-  tabDot: { width: 3, height: 3, borderRadius: 2 },
 });

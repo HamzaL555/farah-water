@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { AppState, type AppStateStatus } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { authApi } from '../services/endpoints';
 import { saveTokens, loadTokens, clearTokens } from '../services/secureStorage';
@@ -65,12 +65,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void bootstrap();
   }, [bootstrap]);
 
-  // Re-sync the session whenever the app returns to the foreground.
-  useFocusEffect(
-    useCallback(() => {
-      if (user && !restored) void bootstrap();
-    }, [user, restored, bootstrap]),
-  );
+  // Re-validate the session when the app returns to the foreground.
+  //
+  // NOTE: this MUST NOT use useFocusEffect. AuthProvider is rendered above
+  // RootNavigator, so it sits outside <NavigationContainer>, and any
+  // navigation hook there throws "Couldn't find a navigation object" and takes
+  // the whole app down on launch. AppState works at any level of the tree.
+  useEffect(() => {
+    const onChange = (state: AppStateStatus) => {
+      if (state !== 'active') return;
+      void flush();
+      // Only re-check when we already had a session; otherwise a failed check
+      // would bounce the user to the login screen unnecessarily.
+      void (async () => {
+        try {
+          const { data } = await authApi.me();
+          setUser(data);
+        } catch {
+          /* keep the current session; the API client handles hard failures */
+        }
+      })();
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   Button,
   ActivityIndicator,
@@ -38,7 +38,6 @@ import type { AdminStackParamList } from '../navigation/types';
 import type { PaymentMethod, DebtAdjustmentType } from '../types';
 
 type Props = NativeStackScreenProps<AdminStackParamList, 'DeliveryDetail'>;
-type Nav = NativeStackNavigationProp<AdminStackParamList>;
 
 /**
  * Delivery detail: money summary, append-only payment history, and the actions
@@ -49,7 +48,7 @@ type Nav = NativeStackNavigationProp<AdminStackParamList>;
  * server, which is the authority.
  */
 export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
-  const navigation = useNavigation<Nav>();
+  
   const { user, isConnected } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
 

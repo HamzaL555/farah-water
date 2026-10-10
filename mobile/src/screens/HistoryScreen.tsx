@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Text } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Searchbar, ActivityIndicator, Chip } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,12 +8,10 @@ import { DeliveryRow } from '../components/DeliveryRow';
 import { EmptyState } from '../components/EmptyState';
 import { useAsync } from '../hooks/useAsync';
 import { deliveriesApi } from '../services/endpoints';
-import { formatMoney } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
 import type { Delivery, DeliveryStatus } from '../types';
 import type { AdminStackParamList } from '../navigation/types';
 
-type Props = RouteProp<{ History: { focusId?: string } | undefined }, 'History'>;
 type Nav = NativeStackNavigationProp<AdminStackParamList>;
 
 const FILTERS: Array<{ value: DeliveryStatus | 'ALL'; label: string }> = [
@@ -26,7 +24,7 @@ const FILTERS: Array<{ value: DeliveryStatus | 'ALL'; label: string }> = [
 /** Worker history: their own deliveries with search and status filters. */
 export const HistoryScreen: React.FC = () => {
   const navigation = useNavigation<Nav>();
-  const route = useRoute<Props>();
+  
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<DeliveryStatus | 'ALL'>('ALL');
   const [page, setPage] = useState(1);

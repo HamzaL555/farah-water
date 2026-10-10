@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Text } from 'react-native';
+import { ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Text } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, TextInput as PaperInput, HelperText, Snackbar } from 'react-native-paper';
