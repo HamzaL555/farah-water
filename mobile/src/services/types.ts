@@ -33,7 +33,7 @@ import type {
  *   - Production        -> https://your-domain.com/api/v1
  * See README.md ("Server ünvanını dəyişmək").
  */
-export const API_BASE_URL = 'https://pos-date-tyler-decimal.trycloudflare.com/api/v1';
+export const API_BASE_URL = 'https://farah-water.vercel.app/api/v1';
 
 export interface ApiEnvelope<T> {
   data: T;
