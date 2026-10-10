@@ -37,3 +37,9 @@ mobile/android/app/build/
 mobile/android/build/
 mobile/android/local.properties
 mobile/android/.cxx/
+
+tools/tunnel.log
+tools/tunnel.err
+tools/backend.log
+tools/backend.err
+tools/cloudflared.exe
