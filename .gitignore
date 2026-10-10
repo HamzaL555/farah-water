@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+*.apk
+*.aab
+
+# env / secrets - never commit
+.env
+.env.local
+.env.*.local
+*.keystore
+*.jks
+keystore.properties
+google-services.json
+
+# built artefacts (the release APK is distributed, not source-controlled)
+release/
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# tooling
+coverage/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# android build artefacts
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+mobile/android/local.properties
+mobile/android/.cxx/

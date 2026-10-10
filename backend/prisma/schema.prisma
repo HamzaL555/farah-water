@@ -1,0 +1,317 @@
+// ---------------------------------------------------------------------------
+// Farah Water Company - PostgreSQL schema
+// Money is always Decimal(12,2) -> Postgres `numeric` (NEVER float).
+// Financial rows are voided/adjusted, never hard-deleted.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================== ENUMS ======================================
+
+enum Role {
+  ADMIN
+  WORKER
+}
+
+enum DeliveryStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  OTHER
+}
+
+enum InventoryTxType {
+  INBOUND //        + warehouse        (new bottles received)
+  ISSUE_TO_WORKER // + worker, - warehouse
+  OUT_DELIVERY //   - worker           (bottles actually delivered & sold)
+  RETURN_TO_STOCK // + warehouse, - worker
+  DAMAGE //         - (from warehouse or worker) -> scrap
+  LOSS //           - (from warehouse or worker) -> written off
+  CORRECTION //     +/- manual adjustment by admin
+}
+
+enum BalanceScope {
+  WAREHOUSE
+  WORKER
+}
+
+enum DebtAdjustmentType {
+  FORGIVE // debt waived  -> reduces what is owed
+  DECREASE //           -> reduces what is owed
+  INCREASE //           -> increases what is owed
+}
+
+// ============================== USERS ======================================
+
+model User {
+  id                 String    @id @default(uuid())
+  fullName           String
+  username           String    @unique
+  phone              String?   @unique
+  email              String?   @unique
+  passwordHash       String
+  role               Role      @default(WORKER)
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens  RefreshToken[]
+  deliveries     Delivery[]     @relation("DeliveryWorker")
+  recordedPay    Payment[]      @relation("PaymentRecordedBy")
+  inventoryTx    InventoryTransaction[]
+  inventoryBal   InventoryBalance[]
+  debtAdj        DebtAdjustment[]
+  auditLogs      AuditLog[]
+
+  @@index([role, isActive])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model LoginAttempt {
+  id         String   @id @default(uuid())
+  identifier String
+  ip         String?
+  success    Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@map("login_attempts")
+}
+
+// ============================= CUSTOMERS ===================================
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String?
+  address   String
+  note      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries Delivery[]
+  payments   Payment[]
+
+  @@index([name])
+  @@index([address])
+  @@map("customers")
+}
+
+// ============================= DELIVERIES ==================================
+
+/// A delivery is the financial root object. It owns exactly one debt and an
+/// append-only list of payments. Totals are always recomputed server-side.
+///
+/// `paidAmount` is the SETTLED amount = sum(payments) + waived/decreased
+/// adjustments - increased adjustments. It is deliberately NOT a revenue
+/// figure: revenue is computed only from `payments` rows that are not voided,
+/// so a waived debt can never be counted as cash received.
+/// The database enforces `debtAmount = totalAmount - paidAmount`.
+model Delivery {
+  id           String         @id @default(uuid())
+  idempotencyKey String       @unique
+  customerId   String
+  workerId     String
+  address      String
+  contactPhone String?
+
+  bottleCount Int
+  unitPrice   Decimal        @db.Decimal(12, 2)
+  totalAmount Decimal        @db.Decimal(12, 2)
+  paidAmount  Decimal        @default(0) @db.Decimal(12, 2)
+  debtAmount  Decimal        @default(0) @db.Decimal(12, 2)
+  status      DeliveryStatus @default(UNPAID)
+
+  deliveredAt DateTime
+  note        String?
+
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  worker    User       @relation("DeliveryWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  payments  Payment[]
+  debtsAdj  DebtAdjustment[]
+  inventory InventoryTransaction[]
+
+  @@index([workerId, deliveredAt])
+  @@index([customerId, deliveredAt])
+  @@index([status])
+  @@index([deliveredAt])
+  @@map("deliveries")
+}
+
+// ============================== PAYMENTS ===================================
+
+/// Append-only money-in ledger. Never updated except to VOID (soft delete).
+/// `idempotencyKey` guarantees a payment can never be double recorded.
+model Payment {
+  id             String        @id @default(uuid())
+  idempotencyKey String        @unique
+  deliveryId     String
+  customerId     String
+  /// worker credited with this cash (the worker who performed the delivery)
+  workerId       String
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod @default(CASH)
+  paidAt         DateTime
+  note           String?
+  recordedById   String
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  recordedBy User     @relation("PaymentRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([deliveryId])
+  @@index([workerId, paidAt])
+  @@index([paidAt])
+  @@index([customerId])
+  @@map("payments")
+}
+
+// ============================ DEBT ADJUSTMENTS =============================
+
+/// Borc güzəşti / düzəlişi. Kept strictly separate from payments so that a
+/// waived debt can never inflate reported revenue.
+model DebtAdjustment {
+  id          String              @id @default(uuid())
+  deliveryId  String
+  type        DebtAdjustmentType
+  amount      Decimal             @db.Decimal(12, 2)
+  reason      String
+  createdById String
+  createdAt   DateTime            @default(now())
+
+  delivery  Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  createdBy User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([deliveryId])
+  @@map("debt_adjustments")
+}
+
+// ============================== INVENTORY ==================================
+
+/// One row per stock bucket: "WAREHOUSE" or "WORKER:<userId>".
+/// `quantity` is maintained with atomic `quantity = quantity + delta` UPDATEs
+/// plus a DB CHECK (quantity >= 0) so stock can never go negative under load.
+model InventoryBalance {
+  key       String       @id
+  scope     BalanceScope
+  workerId  String?      @unique
+  quantity  Int          @default(0)
+  updatedAt DateTime     @updatedAt
+
+  worker User? @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_balances")
+}
+
+/// Append-only stock ledger. `reference` is the idempotency key that makes a
+/// repeated delivery/inventory call a no-op instead of a double deduction.
+model InventoryTransaction {
+  id          String          @id @default(uuid())
+  reference   String          @unique
+  type        InventoryTxType
+  bottleCount Int
+  /// signed delta applied to `balanceKey` (+1 in, -1 out)
+  direction   Int
+  balanceKey  String
+  workerId    String?
+  deliveryId  String?
+  note        String?
+  occurredAt  DateTime        @default(now())
+  createdById String
+  createdAt   DateTime        @default(now())
+
+  worker   User?     @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  delivery Delivery? @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  @@index([balanceKey, occurredAt])
+  @@index([type])
+  @@index([workerId, occurredAt])
+  @@index([deliveryId])
+  @@map("inventory_transactions")
+}
+
+// ============================== AUDIT ======================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actorName  String?
+  actorRole  String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  meta       Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ============================ APP SETTINGS =================================
+
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("app_settings")
+}

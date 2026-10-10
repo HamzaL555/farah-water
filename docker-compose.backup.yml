@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Nightly backup container for the Farah PostgreSQL database.
+# Schedule with cron, e.g. 03:15 every night:
+#   15 3 * * * docker exec farah-postgres pg_dumpall -U farah > /backup/dump.sql
+# Better: use the compose profile below on a schedule.
+#
+#   docker compose --profile backup up -d backup
+# ---------------------------------------------------------------------------
+
+services:
+  backup:
+    image: postgres:16-alpine
+    container_name: farah-backup
+    restart: unless-stopped
+    environment:
+      PGUSER: ${POSTGRES_USER:-farah}
+      PGHOST: db
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-farah}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-30}
+    volumes:
+      - ./backups:/backups
+      - ../docs/backup-restore.sh:/scripts/backup.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        while true; do
+          echo \"[backup] $(date -u +%FT%TZ) yeni ehtiyat yaradilir...\";
+          FILE=/backups/farah-$$(date -u +%Y%m%d-%H%M%S).dump;
+          if pg_dump -h \"$$PGHOST\" -U \"$$PGUSER\" -d \"$$PGDATABASE\" -Fc -f \"$$FILE\"; then
+            gzip -f \"$$FILE\";
+            echo \"[backup] uğurlu: $$FILE.gz\";
+            ls -1t /backups/farah-*.dump.gz | tail -n +$$((BACKUP_RETENTION_COUNT + 1)) | xargs -r rm --;
+          else
+            echo \"[backup] XƏTA: ehtiyat yaradıla bilmədi\" >&2;
+          fi;
+          sleep \"$$BACKUP_INTERVAL_SECONDS\";
+        done
+      "

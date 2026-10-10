@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Farah Water Company - local development stack
+#   docker compose up -d
+#   docker compose exec backend npx prisma migrate deploy
+#   docker compose exec backend npm run seed
+# ---------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: farah-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-farah}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-farah_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-farah}
+      # Deterministic collation regardless of host OS locale.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=en-US --encoding=UTF8'
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # Named volume => data survives `docker compose down` and container rebuilds.
+      - farah_pgdata:/var/lib/postgresql/data
+      - ./backend/docker-initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-farah} -d ${POSTGRES_DB:-farah}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: farah-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-farah}:${POSTGRES_PASSWORD:-farah_dev_password}@db:5432/${POSTGRES_DB:-farah}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set in .env}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-30m}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TZ_OFFSET_MINUTES: ${TZ_OFFSET_MINUTES:-240}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_FULL_NAME: ${INITIAL_ADMIN_FULL_NAME:-Farah Su Şirkəti Admin}
+      INITIAL_ADMIN_PHONE: ${INITIAL_ADMIN_PHONE:-}
+    ports:
+      - '${BACKEND_PORT:-4000}:4000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://127.0.0.1:4000/api/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  farah_pgdata:
+    name: farah_pgdata

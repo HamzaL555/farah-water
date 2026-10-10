@@ -1,0 +1,47 @@
+{
+  "name": "farah-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "start": "react-native start",
+    "lint": "eslint .",
+    "tsc": "tsc --noEmit",
+    "build:apk:debug": "cd android && gradlew.bat assembleDebug",
+    "build:apk:release": "cd android && gradlew.bat assembleRelease",
+    "clean": "cd android && gradlew.bat clean"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-native-community/netinfo": "^12.0.1",
+    "react-native-gesture-handler": "^2.28.0",
+    "@react-native-vector-icons/material-design-icons": "^13.1.4",
+    "@react-navigation/bottom-tabs": "^7.20.0",
+    "@react-navigation/native": "^7.5.0",
+    "@react-navigation/native-stack": "^7.20.0",
+    "react": "19.1.0",
+    "react-native": "0.81.4",
+    "react-native-keychain": "^10.0.0",
+    "react-native-paper": "^5.15.3",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-screens": "4.16.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.0.0",
+    "@react-native-community/cli-platform-android": "20.0.0",
+    "@react-native/babel-preset": "0.81.4",
+    "@react-native/eslint-config": "0.81.4",
+    "@react-native/metro-config": "0.81.4",
+    "@react-native/typescript-config": "0.81.4",
+    "@types/react": "^19.1.0",
+    "eslint": "^8.19.0",
+    "prettier": "2.8.8",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
