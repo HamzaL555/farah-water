@@ -5,15 +5,19 @@
  * app is exposed as a Node serverless function instead. Everything the app does
  * (routes, auth, Prisma, PostgreSQL via Neon) is unchanged - only the way it is
  * started differs: instead of `app.listen()`, the platform passes req/res.
+ *
+ * Types come from Express rather than @vercel/node: the request/response objects
+ * Vercel hands us ARE Express-compatible (Node's http.IncomingMessage /
+ * ServerResponse), so reusing our own types avoids a dependency mismatch.
  */
-import type { ServerlessRequest, ServerlessResponse } from '@vercel/node';
+import type { Request, Response } from 'express';
 
 import { createApp } from '../src/app';
 
 const app = createApp();
 
-export default function handler(req: ServerlessRequest, res: ServerlessResponse): void {
-  // Vercel rewrites every path to this function, so req.url still carries the
-  // original /api/v1/... prefix that our Express router expects.
-  app(req as never, res as never);
+export default function handler(req: Request, res: Response): void {
+  // vercel.json rewrites every path here, so req.url keeps the original
+  // /api/v1/... prefix that our Express router expects.
+  app(req, res);
 }
