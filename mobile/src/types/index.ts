@@ -134,6 +134,9 @@ export interface InventoryTransaction {
   note: string | null;
   occurredAt: string | null;
   createdById: string;
+  /** Who recorded the movement - not necessarily who owns the stock. */
+  createdByName: string | null;
+  createdByRole: Role | null;
   createdAt: string | null;
 }
 

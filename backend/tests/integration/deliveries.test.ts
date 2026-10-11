@@ -314,9 +314,38 @@ describe('role separation', () => {
     }
   });
 
-  it('blocks workers from admin inventory operations', async () => {
-    const res = await api.post('/api/v1/inventory/stock-in').set(auth(fx.worker!.token)).send({ bottleCount: 100 });
-    expect(res.statusCode).toBe(403);
+  it('lets a worker record bottles arriving, but keeps issuing admin-only', async () => {
+    // Workers physically count what arrives, so INBOUND is open to them.
+    const inbound = await api
+      .post('/api/v1/inventory/stock-in')
+      .set(auth(fx.worker!.token))
+      .send({ bottleCount: 100, note: 'Sayım' });
+    expect(inbound.statusCode).toBe(201);
+
+    // Handing stock to another worker stays an admin responsibility.
+    const issue = await api
+      .post('/api/v1/inventory/issue')
+      .set(auth(fx.worker!.token))
+      .send({ workerId: fx.worker2!.id, bottleCount: 10 });
+    expect(issue.statusCode).toBe(403);
+
+    // And the warehouse ledger must attribute the entry to the worker.
+    const ledger = await api.get('/api/v1/inventory/transactions?pageSize=50').set(auth(fx.admin!.token));
+    const entry = ledger.body.data.items.find(
+      (t: { createdById: string; type: string }) => t.createdById === fx.worker!.id && t.type === 'INBOUND',
+    );
+    expect(entry?.createdByRole, 'the warehouse ledger must attribute the entry').toBe('WORKER');
+    expect(entry?.createdByName, 'and must show who recorded it').toBeTruthy();
+  });
+
+  it('lists every worker account for the admin handover picker', async () => {
+    // worker2 has never received stock, so it has no balance row; it must
+    // still appear with quantity 0 instead of being missing.
+    const res = await api.get('/api/v1/inventory/summary').set(auth(fx.admin!.token));
+    const ids: string[] = res.body.data.workers.map((w: { workerId: string }) => w.workerId);
+    expect(ids).toContain(fx.worker2!.id);
+    const row = res.body.data.workers.find((w: { workerId: string }) => w.workerId === fx.worker2!.id);
+    expect(row.quantity).toBe(0);
   });
 
   it('blocks a worker from creating another user', async () => {

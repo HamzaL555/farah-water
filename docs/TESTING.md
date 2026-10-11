@@ -20,23 +20,63 @@ npm.cmd run test:unit
 
 ## Integration testlər (PostgreSQL lazımdır)
 
+> ### ⚠️ ƏVVƏLCƏ BU HƏSSASLIĞI OXU
+>
+> Bu testlər hər başlayanda **bütün cədvəlləri `TRUNCATE` edir**.
+> `backend/.env` faylındakı `DATABASE_URL` **canlı Neon bazasıdır** — ona görə
+> `npm run test:integration` birbaşa işə salınsa, canlı məlumat silinir və
+> `admin` hesabı test fixtures-ı ilə əvəzlənir.
+>
+> Bunun baş verməsinin qarşısı alınıb: `tests/helpers/test-db-guard.ts`
+> dəyişən lokal (`localhost`) və verilənlər bazası adı `farah_test` olmayan
+> hər URL-ə qarşı testləri dayandırır. Qoruma `vitest.config.ts`-də və
+> `setup.ts`-də (silmə əmriyetin yaxınında) **iki dəfə** tətbiq olunur.
+> İdarə olunan hostlar (`*.neon.tech`, `*.supabase.co`, RDS, Cloud SQL …)
+> üçün heç bir opt-in yoxdur.
+>
+> Daha ətraflı: [`backend/docs/PRODUCTION-DB-SAFETY.md`](../backend/docs/PRODUCTION-DB-SAFETY.md)
+
+Düzgün quruluş:
+
 ```powershell
 docker compose up -d db
+# lokal test bazasını yaradın
+docker exec -it farah-postgres psql -U farah -d postgres -c "CREATE DATABASE farah_test;"
+```
+
+`.env` faylında **canlı** URL-i eyni faylda saxlamayın. Test üçün ayrıca fayldan
+istifadə edin:
+
+```powershell
+# backend/tests/.env.local  (bu fayl git-ignore-dir, canlı URL burada olmamalıdır)
+DATABASE_URL=postgresql://farah:farah@localhost:5432/farah_test
+```
+
+```powershell
 cd backend
 npm.cmd run test:integration
 ```
 
 Testlər bir həlli DB-yə eyni vaxtda toxunur, ona görə ardıcıl icra olunur
-(`fileParallelism: false`).
+(`fileParallelism: false`). Uzaq bazaya (Neon) qarşı paralel icra
+30 saniyəlik test tavanını aşır; şifrəli ardıcıl icra üçün:
+
+```powershell
+node scripts\run-integration-sequential.js auth inventory deliveries reports
+```
 
 | Fayl | Test sayı | Əhatə |
 |---|---|---|
 | `auth.test.ts` | 20 | login (ad/e-mail/telefon), səhv parol, hesab bloklanması, deaktiv hesab, refresh fırladılması, yalnız hash sağlanması, logout, şifrə dəyişmə, token təhrifəsə, qeydiyyat endpoint-i yoxdur |
-| `deliveries.test.ts` | 32 | 10×2.00=20.00, qismən ödəniş (12→8), tam ödəniş, həddi aşma, **təkrar ödənişin bloklanması**, `status=PAID` saxtalamağının uğursuz olması, borc güzəşti gəliri artırmır, void + borcun bərpası, paralel əməliyyat, rol ayrılığı, validasiya |
+| `deliveries.test.ts` | 33 | 10×2.00=20.00, qismən ödəniş (12→8), tam ödəniş, həddi aşma, **təkrar ödənişin bloklanması**, `status=PAID` saxtalamağının uğursuz olması, borc güzəşti gəliri artırmır, void + borcun bərpası, paralel əməliyyat, rol ayrılığı (işçi anbara qəbul edə bilər, təhvil edə bilməz), **stokda olmayan işçi də admin seçicisində görünür**, validasiya |
 | `inventory.test.ts` | 22 | qəbul, təhvil, çatdırılmada çıxış, kifayət etmədikdə xəta, **5 paralel çatdırılmada anvar mənfi olmur**, təkrar icra, qaytarma, zədələnmiş/itmiş, jurnal, DB trigger-ləri |
 | `reports.test.ts` | 18 | gəlir = faktiki ödəniş (faktura ayrı), keçən borcun bu günə düşməsi, void gəlirdən çıxması, üslub/işçi bölgüsü, CSV (UTF-8 BOM), PDF (Azerbaijani hərfli), süzələmə, sıralama, audit jurnalı |
 
-Cəmi: **42 unit + 92 integration = 134 test**, hamısı keçir.
+Cəmi: **49 unit + 93 integration = 142 test**, hamısı keçir.
+
+Unit səviyyəsində 7 yeni test `test-db-guard` üçündür: canlı URL, digər
+idarə olunan hostlar, opt-insiz uzaq host, yanlış baza adı, boş URL, düzgün
+lokal baza və `host.docker.internal`.
 
 ## DB səviyyəsində müdafiə yoxlaması
 

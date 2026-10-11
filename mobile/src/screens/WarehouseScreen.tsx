@@ -9,7 +9,6 @@ import {
   TextInput as PaperInput,
   HelperText,
   SegmentedButtons,
-  Menu,
   Chip,
   Snackbar,
 } from 'react-native-paper';
@@ -50,18 +49,30 @@ export const WarehouseScreen: React.FC = () => {
   const [count, setCount] = useState('');
   const [note, setNote] = useState('');
   const [workerId, setWorkerId] = useState<string | undefined>();
-  const [workerMenu, setWorkerMenu] = useState(false);
   const [writeOffType, setWriteOffType] = useState<'DAMAGE' | 'LOSS'>('DAMAGE');
   const [touched, setTouched] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
 
+  const workers = summary?.workers ?? [];
   const countNum = parseInt(count || '0', 10);
-  const selectedWorker = summary?.workers.find((w) => w.workerId === workerId);
+  const selectedWorker = workers.find((w) => w.workerId === workerId);
 
   const countError = touched && countNum <= 0 ? 'Say daxil edin (tam ədəd).' : null;
   const noteError =
     touched && dialogMode === 'writeOff' && !note.trim() ? 'Səbəb yazılmalıdır.' : null;
-  const workerError = touched && dialogMode === 'issue' && !workerId ? 'İşçi seçin.' : null;
+  const workerError =
+    touched && dialogMode === 'issue'
+      ? workers.length === 0
+        ? 'Əvvəlcə işçi yaradın.'
+        : !workerId
+          ? 'İşçi seçin.'
+          : null
+      : null;
+  /** Admin cannot hand over more than the warehouse actually holds. */
+  const stockError =
+    dialogMode === 'issue' && countNum > (summary?.warehouseQuantity ?? 0)
+      ? `Anbarda yalnız ${summary?.warehouseQuantity ?? 0} bidon var.`
+      : null;
 
   const action = useSubmit(async () => {
     const payload = {
@@ -87,15 +98,24 @@ export const WarehouseScreen: React.FC = () => {
     if (countNum <= 0) return;
     if (dialogMode === 'issue' && !workerId) return;
     if (dialogMode === 'writeOff' && !note.trim()) return;
+    if (dialogMode === 'issue' && countNum > (summary?.warehouseQuantity ?? 0)) return;
 
     const result = await action.submit();
     if (!result) return;
+    const done = dialogMode;
+    const handedTo = selectedWorker?.workerName;
     setDialogMode(null);
     setCount('');
     setNote('');
     setWorkerId(undefined);
     setTouched(false);
-    setSnack(`Əməliyyat qeydə alındı. Yeni qalıq: ${result.newBalance}`);
+    setSnack(
+      done === 'issue' && handedTo
+        ? `${handedTo} adına təhvil edildi. Yeni qalıq: ${result.newBalance}`
+        : done === 'stockIn'
+          ? `Anbar qəbul edildi. Anbarda: ${result.newBalance} bidon.`
+          : `Əməliyyat qeydə alındı. Yeni qalıq: ${result.newBalance}`,
+    );
     void refreshAll();
   };
 
@@ -151,8 +171,7 @@ export const WarehouseScreen: React.FC = () => {
         <SectionCard title="İşçilərin əlində" subtitle="Hər işçinin bidon sayı">
           {!summary || summary.workers.length === 0 ? (
             <EmptyState icon="👷" title="Məlumat yoxdur" message="Hələ bidon təhvil edilməyib." />
-          ) : (
-            summary.workers.map((w) => (
+          ) : (            summary.workers.map((w) => (
               <View key={w.workerId} style={styles.workerRow}>
                 <View style={styles.flex}>
                   <Text style={styles.workerName}>{w.workerName}</Text>
@@ -173,7 +192,7 @@ export const WarehouseScreen: React.FC = () => {
           {loading && !history ? (
             <ActivityIndicator />
           ) : !history || history.items.length === 0 ? (
-            <EmptyState icon="📋" title="Əməliyyat yoxdur" />
+            <EmptyState icon="📋" title="Əməliyyat yoxdur" message="Hələ heç bir bidon hərəkəti qeydə alınmayıb." />
           ) : (
             history.items.map((t) => (
               <View key={t.id} style={styles.txRow}>
@@ -189,7 +208,8 @@ export const WarehouseScreen: React.FC = () => {
                   <Text style={styles.txType}>{INVENTORY_TYPE_LABEL[t.type as InventoryTxType]}</Text>
                   <Text style={styles.txMeta}>
                     {formatDateTime(t.occurredAt)}
-                    {t.workerName ? ` · ${t.workerName}` : ''}
+                    {t.createdByName ? ` · ${t.createdByName}` : ''}
+                    {t.createdByRole === 'WORKER' ? ' (işçi)' : t.createdByRole === 'ADMIN' ? ' (admin)' : ''}
                     {t.note ? ` · ${t.note}` : ''}
                   </Text>
                 </View>
@@ -210,31 +230,39 @@ export const WarehouseScreen: React.FC = () => {
             ) : dialogMode === 'issue' ? (
               <>
                 <Text style={styles.dialogHint}>Bidonlar anbardan çıxıb işçinin hesabına keçir.</Text>
-                <Menu
-                  visible={workerMenu}
-                  onDismiss={() => setWorkerMenu(false)}
-                  anchor={
-                    <Button
-                      mode="outlined"
-                      icon="account"
-                      onPress={() => setWorkerMenu(true)}
-                      style={styles.dialogInput}
-                    >
-                      {selectedWorker?.workerName ?? 'İşçi seçin'}
-                    </Button>
-                  }
-                >
-                  {summary?.workers.map((w) => (
-                    <Menu.Item
-                      key={w.workerId}
-                      title={w.workerName}
-                      onPress={() => {
-                        setWorkerId(w.workerId);
-                        setWorkerMenu(false);
-                      }}
-                    />
-                  ))}
-                </Menu>
+                {/*
+                  A Paper <Menu> nested inside <Dialog> renders its own Modal, and
+                  on Android the inner modal never becomes touchable. Chips are
+                  used instead - the same pattern the write-off branch below
+                  already relies on.
+                */}
+                {workers.length === 0 ? (
+                  <View style={styles.noWorkers}>
+                    <Text style={styles.noWorkersText}>
+                      Hələ heç bir işçi yoxdur. Əvvəlcə "İşçilər" bölməsindən işçi yaradın.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.chipRow}>
+                    {workers.map((w) => (
+                      <Chip
+                        key={w.workerId}
+                        compact
+                        selected={workerId === w.workerId}
+                        disabled={!w.isActive}
+                        showSelectedCheck
+                        style={styles.chip}
+                        onPress={() => {
+                          if (!w.isActive) return;
+                          setWorkerId(w.workerId);
+                          setTouched(false);
+                        }}
+                      >
+                        {w.workerName} ({w.quantity})
+                      </Chip>
+                    ))}
+                  </View>
+                )}
                 {workerError ? <HelperText type="error">{workerError}</HelperText> : null}
               </>
             ) : (
@@ -278,6 +306,7 @@ export const WarehouseScreen: React.FC = () => {
               style={styles.dialogInput}
             />
             {countError ? <HelperText type="error">{countError}</HelperText> : null}
+            {stockError && count ? <HelperText type="error">{stockError}</HelperText> : null}
 
             <PaperInput
               label={dialogMode === 'writeOff' ? 'Səbəb' : 'Qeyd (istəyə bağlı)'}
@@ -294,7 +323,7 @@ export const WarehouseScreen: React.FC = () => {
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setDialogMode(null)}>Ləğv et</Button>
-            <Button onPress={onSubmit} loading={action.submitting}>
+            <Button onPress={onSubmit} loading={action.submitting} disabled={action.submitting || (dialogMode === 'issue' && (!workerId || workers.length === 0))}>
               Təsdiqlə
             </Button>
           </Dialog.Actions>
@@ -336,4 +365,12 @@ const styles = StyleSheet.create({
   dialogHint: { fontSize: 12, color: colors.textMuted, marginBottom: spacing.sm },
   dialogInput: { marginBottom: spacing.sm },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
+  chip: { marginBottom: 2 },
+  noWorkers: {
+    backgroundColor: colors.warningBg,
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  noWorkersText: { color: colors.warning, fontSize: 12 },
 });

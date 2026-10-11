@@ -79,6 +79,9 @@ model User {
   deliveries     Delivery[]     @relation("DeliveryWorker")
   recordedPay    Payment[]      @relation("PaymentRecordedBy")
   inventoryTx    InventoryTransaction[]
+  /// Stock rows this user RECORDED. Distinct from `inventoryTx`, which are the
+  /// rows where the stock belongs to them.
+  recordedStock  InventoryTransaction[] @relation("InventoryTxCreatedBy")
   inventoryBal   InventoryBalance[]
   debtAdj        DebtAdjustment[]
   auditLogs      AuditLog[]
@@ -272,6 +275,7 @@ model InventoryTransaction {
 
   worker   User?     @relation(fields: [workerId], references: [id], onDelete: Restrict)
   delivery Delivery? @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  createdBy User     @relation("InventoryTxCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([balanceKey, occurredAt])
   @@index([type])

@@ -46,6 +46,10 @@ export const BottlesScreen: React.FC = () => {
     }, [refreshAll]),
   );
 
+  const [stockInOpen, setStockInOpen] = useState(false);
+  const [stockInCount, setStockInCount] = useState('');
+  const [stockInNote, setStockInNote] = useState('');
+
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnCount, setReturnCount] = useState('');
   const [returnNote, setReturnNote] = useState('');
@@ -56,6 +60,21 @@ export const BottlesScreen: React.FC = () => {
   const [writeOffNote, setWriteOffNote] = useState('');
 
   const [snack, setSnack] = useState<string | null>(null);
+
+  /**
+   * Workers physically count what arrives, so they may post the inbound. The
+   * server records who did it and the admin's warehouse view shows the same
+   * figure, so both sides see one number.
+   */
+  const stockInAction = useSubmit(() =>
+    inventoryApi
+      .stockIn({
+        bottleCount: parseInt(stockInCount || '0', 10),
+        note: stockInNote.trim() || undefined,
+        idempotencyKey: `in-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      })
+      .then((r) => r.data),
+  );
 
   const returnAction = useSubmit(() =>
     inventoryApi
@@ -81,6 +100,9 @@ export const BottlesScreen: React.FC = () => {
   const myQuantity = data?.quantity ?? 0;
   const returnCountNum = parseInt(returnCount || '0', 10);
   const writeOffCountNum = parseInt(writeOffCount || '0', 10);
+  const stockInCountNum = parseInt(stockInCount || '0', 10);
+
+  const stockInError = stockInCountNum <= 0 ? 'Say daxil edin.' : null;
 
   const returnError = returnCountNum <= 0 ? 'Say daxil edin.' : returnCountNum > myQuantity ? `Əlinizdə ${myQuantity} bidon var.` : null;
   const writeOffError =
@@ -91,6 +113,18 @@ export const BottlesScreen: React.FC = () => {
         : !writeOffNote.trim()
           ? 'Səbəb yazın.'
           : null;
+
+  const onStockIn = async () => {
+    if (stockInError) return;
+    const entered = stockInCountNum;
+    const result = await stockInAction.submit();
+    if (!result) return;
+    setStockInOpen(false);
+    setStockInCount('');
+    setStockInNote('');
+    setSnack(`${entered} bidon anbara qəbul edildi. Anbarda: ${result.newBalance} bidon.`);
+    void refreshAll();
+  };
 
   const onReturn = async () => {
     if (returnError) return;
@@ -134,13 +168,20 @@ export const BottlesScreen: React.FC = () => {
         </View>
 
         <View style={styles.actions}>
-          <Button mode="contained" icon="undo" onPress={() => setReturnOpen(true)} style={styles.actionButton}>
+          <Button mode="contained" icon="tray-arrow-down" onPress={() => setStockInOpen(true)} style={styles.actionButton}>
+            Anbara qəbul
+          </Button>
+          <Button mode="contained-tonal" icon="undo" onPress={() => setReturnOpen(true)} style={styles.actionButton}>
             Anbara qaytar
           </Button>
           <Button mode="outlined" icon="alert-circle" onPress={() => setWriteOffOpen(true)} style={styles.actionButton}>
             Zədələnmiş / itmiş
           </Button>
         </View>
+
+        <Text style={styles.hint}>
+          "Anbara qəbul" — yeni gələn bidonları yaz. Admin dərhal görür. "Anbara qaytar" isə öz əlinizdən artıq qalanı geri qaytarır.
+        </Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -182,6 +223,40 @@ export const BottlesScreen: React.FC = () => {
 
         <KeyValueRow label="Son yenilənmə" value={formatDateTime(data?.updatedAt ?? null)} />
       </ScrollView>
+
+      {/* stock in dialog */}
+      <Portal>
+        <Dialog visible={stockInOpen} onDismiss={() => setStockInOpen(false)}>
+          <Dialog.Title>Anbara qəbul</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.dialogHint}>Yeni gələn bidonların sayını yazın. Admin bunu dərhal görəcək.</Text>
+            <PaperInput
+              label="Bidon sayı"
+              value={stockInCount}
+              onChangeText={(t) => setStockInCount(t.replace(/[^\d]/g, ''))}
+              mode="outlined"
+              keyboardType="number-pad"
+              error={Boolean(stockInCount) && Boolean(stockInError)}
+              style={styles.dialogInput}
+            />
+            {stockInCount && stockInError ? <HelperText type="error">{stockInError}</HelperText> : null}
+            <PaperInput
+              label="Qeyd (istəyə bağlı)"
+              value={stockInNote}
+              onChangeText={setStockInNote}
+              mode="outlined"
+              style={styles.dialogInput}
+            />
+            {stockInAction.error ? <HelperText type="error">{stockInAction.error}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setStockInOpen(false)}>Ləğv et</Button>
+            <Button onPress={onStockIn} loading={stockInAction.submitting} disabled={stockInAction.submitting}>
+              Qəbul et
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
 
       {/* return stock dialog */}
       <Portal>
@@ -271,8 +346,9 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { padding: spacing.md, paddingBottom: spacing.xxl },
   row: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-  actions: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-  actionButton: { flex: 1 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.xs },
+  actionButton: { flexGrow: 1 },
+  hint: { fontSize: 11, color: colors.textMuted, marginBottom: spacing.md, lineHeight: 16 },
   error: { color: colors.danger, fontSize: 12, marginBottom: spacing.sm },
   txRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
   txBadge: { minWidth: 44, paddingVertical: 4, paddingHorizontal: 6, borderRadius: radius.sm, alignItems: 'center' },

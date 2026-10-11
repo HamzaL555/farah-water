@@ -190,6 +190,8 @@ export function serializeInventoryTx(t: {
   createdById: string;
   createdAt: Date;
   worker?: { id: string; fullName: string } | null;
+  /** Who recorded the movement - not the same as who owns the stock. */
+  createdBy?: { id: string; fullName: string; role: string } | null;
 }) {
   return {
     id: t.id,
@@ -205,6 +207,8 @@ export function serializeInventoryTx(t: {
     note: t.note,
     occurredAt: iso(t.occurredAt),
     createdById: t.createdById,
+    createdByName: t.createdBy?.fullName ?? null,
+    createdByRole: t.createdBy?.role ?? null,
     createdAt: iso(t.createdAt),
   };
 }

@@ -79,8 +79,15 @@ export async function moveStock(input: StockMovementInput, actor: Actor, req?: n
 
 // --------------------------- authorised operations -------------------------
 
+/**
+ * Records bottles arriving into the central warehouse.
+ *
+ * Both roles may do this: in this business the worker is the one who physically
+ * counts what arrived, and the admin watches the warehouse total. Every row
+ * keeps `createdById`, so the admin view can always show who entered how many,
+ * and the audit log records it too.
+ */
 export async function receiveStock(bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  if (actor.role !== Role.ADMIN) throw forbidden('Yalnız administrator anbara bidon qəbul edə bilər.');
   return moveStock({ type: InventoryTxType.INBOUND, bottleCount, note, reference }, actor, req);
 }
 
@@ -135,7 +142,7 @@ export async function getWarehouseSummary(actor: Actor) {
   const start = resolveRange('today').start!;
   const end = resolveRange('today').end!;
 
-  const [inToday, outToday, damaged, lost, workerRows] = await Promise.all([
+  const [inToday, outToday, damaged, lost, workerUsers, workerBalances] = await Promise.all([
     prisma.inventoryTransaction.aggregate({
       where: { balanceKey: WAREHOUSE_KEY, type: InventoryTxType.INBOUND, occurredAt: { gte: start, lt: end } },
       _sum: { bottleCount: true },
@@ -152,14 +159,32 @@ export async function getWarehouseSummary(actor: Actor) {
       where: { type: InventoryTxType.LOSS },
       _sum: { bottleCount: true },
     }),
+    // Every worker account, not just the ones who already hold stock: a newly
+    // created worker has no InventoryBalance row yet, and must still be
+    // selectable for "İşçiyə təhvil".
+    prisma.user.findMany({
+      where: { role: Role.WORKER },
+      select: { id: true, fullName: true, username: true, isActive: true },
+      orderBy: { fullName: 'asc' },
+    }),
     prisma.inventoryBalance.findMany({
       where: { scope: 'WORKER' },
-      include: { worker: { select: { id: true, fullName: true, username: true, isActive: true } } },
-      orderBy: { quantity: 'desc' },
+      select: { workerId: true, quantity: true },
     }),
   ]);
 
-  const inHand = workerRows.reduce((sum, r) => sum + r.quantity, 0);
+  const balanceByWorker = new Map(workerBalances.map((b) => [b.workerId, b.quantity]));
+  const inHand = workerBalances.reduce((sum, r) => sum + r.quantity, 0);
+
+  const workers = workerUsers
+    .map((u) => ({
+      workerId: u.id,
+      workerName: u.fullName,
+      username: u.username,
+      isActive: u.isActive,
+      quantity: balanceByWorker.get(u.id) ?? 0,
+    }))
+    .sort((a, b) => b.quantity - a.quantity || a.workerName.localeCompare(b.workerName, 'az'));
 
   return {
     warehouseQuantity: warehouse?.quantity ?? 0,
@@ -169,15 +194,7 @@ export async function getWarehouseSummary(actor: Actor) {
     todayOutbound: outToday._sum.bottleCount ?? 0,
     damagedTotal: damaged._sum.bottleCount ?? 0,
     lostTotal: lost._sum.bottleCount ?? 0,
-    workers: workerRows
-      .filter((r) => r.worker)
-      .map((r) => ({
-        workerId: r.worker!.id,
-        workerName: r.worker!.fullName,
-        username: r.worker!.username,
-        isActive: r.worker!.isActive,
-        quantity: r.quantity,
-      })),
+    workers,
   };
 }
 
@@ -224,7 +241,10 @@ export async function listInventoryTransactions(query: ListInventoryQuery, actor
       orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: { worker: { select: { id: true, fullName: true } } },
+      include: {
+        worker: { select: { id: true, fullName: true } },
+        createdBy: { select: { id: true, fullName: true, role: true } },
+      },
     }),
     prisma.inventoryTransaction.count({ where }),
   ]);

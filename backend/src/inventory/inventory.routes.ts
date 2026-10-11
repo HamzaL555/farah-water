@@ -41,10 +41,11 @@ inventoryRouter.get(
   }),
 );
 
-// Admin: receive stock into the warehouse.
+// Receive stock into the warehouse. Workers count what physically arrived, so
+// both roles may post an INBOUND; the row records who did it and the admin's
+// warehouse view shows it.
 inventoryRouter.post(
   '/stock-in',
-  requireRole(Role.ADMIN),
   validate(stockInSchema),
   asyncHandler(async (req, res) => {
     const result = await receiveStock(req.body.bottleCount, req.body.note ?? null, actorOf(req), req as never, req.body.idempotencyKey);

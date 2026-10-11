@@ -6,6 +6,12 @@ import { createApp } from '../../src/app';
 import { prisma } from '../../src/prisma';
 import { Role } from '@prisma/client';
 import { key } from '../helpers';
+import { assertSafeTestDatabase } from '../helpers/test-db-guard';
+
+// Second line of defence. vitest.config.ts already runs this before the suite
+// boots, but resetDb() below truncates the target database, so the check is
+// repeated here where the destructive call actually lives.
+assertSafeTestDatabase(process.env.DATABASE_URL ?? '');
 
 /**
  * Integration fixtures.
