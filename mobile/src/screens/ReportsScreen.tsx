@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text, Share, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Button, ActivityIndicator, Chip, Snackbar } from 'react-native-paper';
@@ -33,20 +33,46 @@ const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
   { value: 'all', label: 'Hamısı' },
 ];
 
+type ExportFormat = 'csv' | 'pdf' | 'xlsx';
+
+/** Months offered by the monthly report picker, most recent first. */
+const monthOptions = (count: number): Array<{ value: string; label: string }> => {
+  const names = [
+    'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun',
+    'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr',
+  ];
+  const now = new Date();
+  const out = [{ value: '', label: 'Bu ay' }, { value: 'last', label: 'Keçən ay' }];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ value, label: `${names[d.getMonth()]} ${d.getFullYear()}` });
+  }
+  return out;
+};
+
 /**
- * Report viewer with CSV/PDF export.
+ * Report viewer with CSV / Excel / PDF export.
  *
- * The file is produced by the backend (so it always matches the database) and
+ * Files are produced by the backend (so they always match the database) and
  * then shared from the device through the native share sheet.
  */
 export const ReportsScreen: React.FC = () => {
   const [type, setType] = useState<ReportType>('daily');
   const [preset, setPreset] = useState<DateRangePreset>('today');
+  const [month, setMonth] = useState('');
   const [snack, setSnack] = useState<string | null>(null);
+
+  const MONTHS = useMemo(() => monthOptions(18), []);
 
   const { data, loading, error, run } = useAsync(
     () => reportsApi.json({ type, preset }).then((r) => r.data),
     [type, preset],
+  );
+
+  const { data: monthly, loading: monthlyLoading, run: runMonthly } = useAsync(
+    () => reportsApi.monthly({ month: month || undefined }).then((r) => r.data),
+    [month],
   );
 
   useFocusEffect(
@@ -55,22 +81,31 @@ export const ReportsScreen: React.FC = () => {
     }, [run]),
   );
 
-  const exportAction = useSubmit(async (exportFormat: 'csv' | 'pdf') => {
-    const result = await reportsApi.raw({ type, preset, format: exportFormat });
-    // Sharing the text/base64 payload lets the user send the export to another
-    // app (mail, cloud, chat) without the app needing filesystem permissions.
-    await Share.share({
-      title: result.filename,
-      message: result.base64 ? result.body : result.body,
-    });
-    return result.filename;
-  });
+  const exportAction = useSubmit(
+    async (args: { format: ExportFormat; monthly?: boolean; month?: string }) => {
+      const result = await reportsApi.raw({
+        ...(args.monthly
+          ? { monthly: true, month: args.month, type, preset }
+          : { type, preset }),
+        format: args.format,
+      });
+      // Sharing the text/base64 payload lets the user send the export to another
+      // app (mail, cloud, chat) without the app needing filesystem permissions.
+      await Share.share({
+        title: result.filename,
+        message: result.base64 ? result.body : result.body,
+      });
+      return result.filename;
+    },
+  );
 
-  const onExport = async (exportFormat: 'csv' | 'pdf') => {
-    const result = await exportAction.submit(exportFormat);
-    if (result) setSnack(`${result} yaradıldı və paylaşma pəncərəsi açıldı.`);
-    else {
-      Alert.alert('Paylaşma mümkün olmadı', 'Hesabat yaradıldı, lakin paylaşma pəncərəsi açılmadı.');
+  const onExport = async (args: { format: ExportFormat; monthly?: boolean; month?: string }) => {
+    try {
+      const result = await exportAction.submit(args);
+      if (result) setSnack(`${result} yaradıldı və paylaşma pəncərəsi açıldı.`);
+      else Alert.alert('Paylaşma mümkün olmadı', 'Hesabat yaradıldı, lakin paylaşma pəncərəsi açılmadı.');
+    } catch (err) {
+      Alert.alert('Hesabat yaradıla bilmədi', err instanceof Error ? err.message : 'Bilinməyən xəta.');
     }
   };
 
@@ -105,26 +140,102 @@ export const ReportsScreen: React.FC = () => {
           ))}
         </View>
 
+        {/* Excel is the primary export: it is what the owner actually opens. */}
         <View style={styles.exportRow}>
           <Button
-            mode="contained-tonal"
+            mode="contained"
             icon="file-delimited"
             loading={exportAction.submitting}
-            onPress={() => void onExport('csv')}
+            onPress={() => void onExport({ format: 'xlsx' })}
             style={styles.exportBtn}
           >
-            CSV ixrac
+            Excel
+          </Button>
+          <Button
+            mode="contained-tonal"
+            icon="file-delimited-outline"
+            loading={exportAction.submitting}
+            onPress={() => void onExport({ format: 'csv' })}
+            style={styles.exportBtn}
+          >
+            CSV
           </Button>
           <Button
             mode="contained-tonal"
             icon="file-pdf-box"
             loading={exportAction.submitting}
-            onPress={() => void onExport('pdf')}
+            onPress={() => void onExport({ format: 'pdf' })}
             style={styles.exportBtn}
           >
-            PDF ixrac
+            PDF
           </Button>
         </View>
+
+        {/* Monthly report, kept separate so it is one tap instead of a date range. */}
+        <SectionCard title="Aylıq hesabat" subtitle="Seçilmiş ayın tam hesabatı">
+          <View style={styles.chipRow}>
+            {MONTHS.slice(0, 12).map((m) => (
+              <Chip
+                key={m.value}
+                compact
+                selected={month === m.value}
+                onPress={() => {
+                  setMonth(m.value);
+                  setTimeout(() => void runMonthly(false), 50);
+                }}
+                style={styles.chip}
+              >
+                {m.label}
+              </Chip>
+            ))}
+          </View>
+
+          <View style={styles.monthActions}>
+            <Button
+              mode="contained"
+              icon="file-delimited"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'xlsx', monthly: true, month })}
+              style={styles.exportBtn}
+            >
+              Excel
+            </Button>
+            <Button
+              mode="contained-tonal"
+              icon="file-delimited-outline"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'csv', monthly: true, month })}
+              style={styles.exportBtn}
+            >
+              CSV
+            </Button>
+            <Button
+              mode="contained-tonal"
+              icon="file-pdf-box"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'pdf', monthly: true, month })}
+              style={styles.exportBtn}
+            >
+              PDF
+            </Button>
+          </View>
+
+          {monthlyLoading ? <ActivityIndicator style={styles.spinner} /> : null}
+
+          {monthly && !monthlyLoading ? (
+            <>
+              <Text style={styles.meta}>
+                {monthly.title} · {monthly.subtitle} · {monthly.sections.length} bölmə
+              </Text>
+              {monthly.sections.map((section) => (
+                <View key={section.heading} style={styles.monthSection}>
+                  <Text style={styles.monthHeading}>{section.heading}</Text>
+                  <Text style={styles.meta}>{section.rows.length} sətir</Text>
+                </View>
+              ))}
+            </>
+          ) : null}
+        </SectionCard>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {loading && !data ? <ActivityIndicator style={styles.spinner} /> : null}
@@ -197,6 +308,14 @@ const styles = StyleSheet.create({
   chip: { marginBottom: 2 },
   exportRow: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.lg },
   exportBtn: { flex: 1 },
+  monthActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  monthSection: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  monthHeading: { fontSize: 12, fontWeight: '600', color: colors.primaryDark },
   error: { color: colors.danger, fontSize: 12, marginBottom: spacing.sm },
   spinner: { marginVertical: spacing.xl },
   meta: { fontSize: 11, color: colors.textMuted },

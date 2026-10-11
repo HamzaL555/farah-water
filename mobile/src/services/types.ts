@@ -212,7 +212,10 @@ export interface ReportParams extends RangeParams {
   type: 'daily' | 'period' | 'worker' | 'customer' | 'inventory' | 'payments' | 'deliveries';
   workerId?: string;
   customerId?: string;
-  format?: 'json' | 'csv' | 'pdf';
+  /** 'xlsx' is the styled Excel workbook; 'csv' stays for plain interchange. */
+  format?: 'json' | 'csv' | 'pdf' | 'xlsx';
+  /** Only meaningful on /reports/monthly: "YYYY-MM", "last", or omitted. */
+  month?: string;
 }
 
 export interface ListInventoryParams {

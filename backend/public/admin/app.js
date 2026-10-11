@@ -26,6 +26,8 @@
   };
 
   // --------------------------------------------------------- utilities --
+  // Both helpers fall back to `document`, so elements injected into #view are
+  // reachable with the same selector used for the static markup.
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
@@ -196,12 +198,14 @@
   function showLogin() {
     $('#shell').hidden = true;
     $('#login').hidden = false;
+    setDrawer(false);
     $('#login-password').value = '';
   }
 
   function showShell() {
     $('#login').hidden = true;
     $('#shell').hidden = false;
+    setDrawer(false);
     var who = $('#who');
     who.innerHTML = '<strong>' + esc(state.user.fullName || '') + '</strong><br>' +
                     esc(state.user.username || '') + ' · ' +
@@ -248,39 +252,74 @@
     showLogin();
   });
 
+  /**
+   * Opens/closes the mobile drawer and keeps the scrim in step, so the drawer
+   * can always be dismissed by tapping outside it.
+   */
+  function setDrawer(open) {
+    $('.sidebar').classList.toggle('open', open);
+    var scrim = $('#scrim');
+    var isMobile = window.matchMedia('(max-width: 860px)').matches;
+    scrim.hidden = !(open && isMobile);
+  }
+
   $('#menu-toggle').addEventListener('click', function () {
-    $('.sidebar').classList.toggle('open');
+    setDrawer(!$('.sidebar').classList.contains('open'));
   });
 
+  $('#scrim').addEventListener('click', function () { setDrawer(false); });
+
   // -------------------------------------------------------------- nav ----
+  /**
+   * Every page the web panel can show.
+   *
+   * `admin: true` marks admin-only pages. Workers get their own set rather than
+   * a filtered subset, so a worker sees the tools that actually apply to them:
+   * record a delivery, record stock, see their own numbers, download their own
+   * reports.
+   */
   var PAGES = [
-    { id: 'dashboard', icon: '📊', label: 'Dashboard', admin: true },
-    { id: 'workers',   icon: '👷', label: 'İşçilər',   admin: true },
-    { id: 'stock',     icon: '🏭', label: 'Anbar',     admin: true },
-    { id: 'customers', icon: '👥', label: 'Müştərilər', admin: false },
-    { id: 'deliveries',icon: '🚚', label: 'Çatdırılmalar', admin: false },
-    { id: 'debts',     icon: '⚠️', label: 'Borclar',   admin: false },
-    { id: 'revenue',   icon: '💰', label: 'Gəlirlər',  admin: true },
-    { id: 'reports',   icon: '📈', label: 'Hesabat',   admin: true },
-    { id: 'audit',     icon: '🛡️', label: 'Audit',     admin: true },
+    { id: 'dashboard', icon: '📊', label: 'Dashboard', roles: ['ADMIN'] },
+    { id: 'workers',   icon: '👷', label: 'İşçilər',   roles: ['ADMIN'] },
+    { id: 'stock',     icon: '🏭', label: 'Anbar',     roles: ['ADMIN'] },
+    { id: 'mystock',   icon: '🧴', label: 'Bidonlarım', roles: ['WORKER'] },
+    { id: 'customers', icon: '👥', label: 'Müştərilər', roles: ['ADMIN', 'WORKER'] },
+    { id: 'deliveries',icon: '🚚', label: 'Çatdırılmalar', roles: ['ADMIN', 'WORKER'] },
+    { id: 'debts',     icon: '⚠️', label: 'Borclar',   roles: ['ADMIN', 'WORKER'] },
+    { id: 'revenue',   icon: '💰', label: 'Gəlirlər',  roles: ['ADMIN'] },
+    { id: 'reports',   icon: '📈', label: 'Hesabat',   roles: ['ADMIN', 'WORKER'] },
+    { id: 'audit',     icon: '🛡️', label: 'Audit',     roles: ['ADMIN'] },
+    { id: 'profile',   icon: '👤', label: 'Profil',    roles: ['ADMIN', 'WORKER'] },
   ];
 
+  function role() {
+    return state.user && state.user.role === 'ADMIN' ? 'ADMIN' : 'WORKER';
+  }
+
   function buildNav() {
-    var isAdmin = state.user && state.user.role === 'ADMIN';
-    $('#nav').innerHTML = PAGES.filter(function (p) { return isAdmin || !p.admin; })
+    var r = role();
+    $('#nav').innerHTML = PAGES.filter(function (p) { return p.roles.indexOf(r) >= 0; })
       .map(function (p) {
         return '<a href="#" data-page="' + p.id + '">' + p.icon + ' ' + esc(p.label) + '</a>';
       }).join('');
     $$('#nav a').forEach(function (a) {
       a.addEventListener('click', function (ev) {
         ev.preventDefault();
-        $('.sidebar').classList.remove('open');
+        setDrawer(false);
         navigate(a.dataset.page);
       });
     });
   }
 
+  /** Guards direct navigation to a page the current role must not open. */
+  function canOpen(page) {
+    var def = PAGES.filter(function (p) { return p.id === page; })[0];
+    if (!def) return false;
+    return def.roles.indexOf(role()) >= 0;
+  }
+
   function navigate(page) {
+    if (!canOpen(page)) page = 'deliveries';
     state.route = page;
     if (location.hash.slice(1) !== page) location.hash = page;
     $$('#nav a').forEach(function (a) {
@@ -391,13 +430,123 @@
     if (page === 'dashboard') return pageDashboard(view);
     if (page === 'workers') return pageWorkers(view);
     if (page === 'stock') return pageStock(view);
+    if (page === 'mystock') return pageMyStock(view);
     if (page === 'customers') return pageCustomers(view);
     if (page === 'deliveries') return pageDeliveries(view);
     if (page === 'debts') return pageDebts(view);
     if (page === 'revenue') return pageRevenue(view);
     if (page === 'reports') return pageReports(view);
     if (page === 'audit') return pageAudit(view);
+    if (page === 'profile') return pageProfile(view);
     view.innerHTML = '<div class="alert alert-error">Səhifə tapılmadı.</div>';
+  }
+
+  // --------------------------------------------------------- my stock ---
+  /** The worker's own bottles: the same actions the phone app offers. */
+  async function pageMyStock(view) {
+    var s = await api('GET', '/inventory/my-stock');
+    var t = await api('GET', '/inventory/transactions?pageSize=25');
+
+    view.innerHTML =
+      '<div class="cards">' +
+        card('Əlimdəki bidonlar', String(s.quantity || 0), 'good') +
+        card('Son yenilənmə', dateTime(s.updatedAt)) +
+      '</div>' +
+      '<div class="toolbar">' +
+        '<button class="btn btn-primary" id="mb-in">+ Anbara qəbul (yeni gələn)</button>' +
+        '<button class="btn btn-secondary" id="mb-back">↩ Anbara qaytar</button>' +
+        '<button class="btn btn-outline" id="mb-wo">Zədələnmiş / itmiş</button>' +
+      '</div>' +
+      '<div class="alert alert-info">Anbara qəbul — yeni gələn bidonların sayını yaz. Admin dərhal görür.</div>' +
+      panel('İnventar tarixçəsi', '', table(
+        [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Qeyd' }],
+        (t.items || []).map(function (x) {
+          return [
+            esc(TX_LABEL[x.type] || x.type),
+            '<span class="' + (x.signedCount > 0 ? 'badge badge-paid' : 'badge badge-unpaid') + '">' +
+              (x.signedCount > 0 ? '+' : '') + x.signedCount + '</span>',
+            dateTime(x.occurredAt),
+            esc(x.note || '—'),
+          ];
+        }), 'Hələ əməliyyat yoxdur.'), true);
+
+    var stockDialog = function (title, mode, requireNote) {
+      // A write-off needs a type: DAMAGE and LOSS are different facts, and the
+      // worker must choose rather than default silently to one of them.
+      var typePicker = mode === 'wo'
+        ? '<label class="field"><span class="field-label">Növ</span><select id="b-type">' +
+          '<option value="DAMAGE">Zədələnmiş</option><option value="LOSS">İtmiş</option>' +
+          '</select></label>'
+        : '';
+      openModal(title,
+        typePicker +
+        moneyField('b-count', 'Bidon sayı', '') +
+        (requireNote ? textField('b-note', 'Səbəb', '') : textField('b-note', 'Qeyd (istəyə bağlı)', '')),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Təsdiqlə', kind: 'primary', onClick: function () {
+            var body = {
+              bottleCount: parseInt($('#b-count').value, 10) || 0,
+              note: $('#b-note').value.trim(),
+              idempotencyKey: idem(mode),
+            };
+            var call;
+            if (mode === 'in') call = api('POST', '/inventory/stock-in', body);
+            else if (mode === 'return') call = api('POST', '/inventory/return', body);
+            else call = api('POST', '/inventory/write-off', Object.assign({ type: $('#b-type').value }, body));
+            return call.then(function (r) {
+              closeModal();
+              toast(title + ' · yeni qalıq: ' + r.newBalance, 'ok');
+              navigate('mystock');
+            });
+          } },
+        ]);
+    };
+
+    $('#mb-in').addEventListener('click', function () { stockDialog('Anbara qəbul', 'in', false); });
+    $('#mb-back').addEventListener('click', function () { stockDialog('Anbara qaytar', 'return', false); });
+    $('#mb-wo').addEventListener('click', function () { stockDialog('Zədələnmiş / itmiş', 'wo', true); });
+  }
+
+  // ----------------------------------------------------------- profile ---
+  async function pageProfile(view) {
+    var me = await api('GET', '/auth/me');
+    state.user = me;
+
+    view.innerHTML =
+      '<div class="cards">' +
+        card('Ad', me.fullName) +
+        card('İstifadəçi adı', me.username) +
+        card('Rol', me.role === 'ADMIN' ? 'Administrator' : 'İşçi') +
+        card('Son giriş', dateTime(me.lastLoginAt)) +
+      '</div>' +
+      (me.mustChangePassword
+        ? '<div class="alert alert-error">Hesabınız üçün şifrə dəyişmək məcburdur.</div>'
+        : '') +
+      panel('Şifrəni dəyiş', '<button class="btn btn-primary btn-sm" id="pw-btn">Şifrə dəyiş</button>',
+        '<div class="small muted">Şifrənizi dəyişdikdə bütun cihazlardan çıxış olacaq.</div>');
+
+    $('#pw-btn').addEventListener('click', function () {
+      openModal('Şifrəni dəyiş',
+        textField('v-old', 'Cari şifrə', '', { type: 'password' }) +
+        textField('v-new', 'Yeni şifrə (ən azı 8 simvol)', '', { type: 'password' }) +
+        textField('v-new2', 'Yeni şifrə (təkrar)', '', { type: 'password' }),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Dəyiş', kind: 'primary', onClick: async function () {
+            var a = $('#v-new').value, b = $('#v-new2').value;
+            if (a !== b) throw new Error('Yeni şifrələr uyğun gəlmir.');
+            await api('POST', '/auth/change-password', {
+              currentPassword: $('#v-old').value,
+              newPassword: a,
+            });
+            closeModal();
+            clearSession();
+            showLogin();
+            toast('Şifrə dəyişdi. Yenidən daxil olun.', 'ok');
+          } },
+        ]);
+    });
   }
 
   // --------------------------------------------------------- dashboard --
@@ -1008,8 +1157,82 @@
     { type: 'deliveries', label: 'Çatdırılmalar' },
   ];
 
+  /**
+   * Downloads a report file.
+   *
+   * fetch() is used rather than a plain link because the endpoint requires an
+   * Authorization header; a bare <a download> would receive 401. The response
+   * is turned into an object URL and released afterwards so repeated exports
+   * do not leak memory.
+   */
+  async function downloadReport(path, fallbackName) {
+    var btn = document.activeElement;
+    if (btn && btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = 'Yüklənir…'; }
+    try {
+      var res = await fetch(API + path, { headers: { authorization: 'Bearer ' + state.token } });
+      if (!res.ok) {
+        var t = await res.text();
+        var msg = 'Yükləmə alınmadı.';
+        try { msg = JSON.parse(t).error.message || msg; } catch (e) { /* keep default */ }
+        throw new Error(msg);
+      }
+      var blob = await res.blob();
+      var name = fallbackName;
+      var cd = res.headers.get('content-disposition') || '';
+      var m = /filename="([^"]+)"/.exec(cd);
+      if (m) name = m[1];
+
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      toast(name + ' yükləndi.', 'ok');
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      if (btn && btn.tagName === 'BUTTON') {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.label || btn.textContent;
+      }
+    }
+  }
+
   async function pageReports(view) {
+    var monthOpts = ['', 'last'];
+    // Offer the last 18 months so the common case needs no date arithmetic.
+    var now = new Date();
+    for (var i = 0; i < 18; i++) {
+      var d = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      monthOpts.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'));
+    }
+
     view.innerHTML =
+      // Monthly report gets its own block: it is the report the owner asks for
+      // most often and it should never be hidden behind a date range.
+      '<div class="panel"><div class="panel-head"><h3>📅 Aylıq hesabat</h3>' +
+        '<div class="spacer"></div>' +
+        '<select id="m-month"><option value="">Bu ay</option><option value="last">Keçən ay</option>' +
+        monthOpts.slice(2).map(function (mm) {
+          var parts = mm.split('-');
+          var names = ['Yanvar','Fevral','Mart','Aprel','May','İyun','İyul','Avqust','Sentyabr','Oktyabr','Noyabr','Dekabr'];
+          return '<option value="' + mm + '">' + names[+parts[1] - 1] + ' ' + parts[0] + '</option>';
+        }).join('') +
+        '</select></div>' +
+        '<div class="panel-body">' +
+          '<div class="toolbar" style="margin-bottom:0">' +
+            '<button class="btn btn-primary" data-mf="xlsx" data-ml="Aylıq hesabat — Excel">📊 Excel (.xlsx)</button>' +
+            '<button class="btn btn-secondary" data-mf="csv" data-ml="Aylıq hesabat — CSV">📄 CSV</button>' +
+            '<button class="btn btn-outline" data-mf="pdf" data-ml="Aylıq hesabat — PDF">📕 PDF</button>' +
+            '<div style="flex:1"></div>' +
+            '<button class="btn btn-outline" id="m-view">Ekranda gör</button>' +
+          '</div>' +
+          '<div class="small muted" style="margin-top:8px">Aylıq hesabat yalnız seçilmiş ayın məlumatını əhatə edir.</div>' +
+        '</div></div>' +
+
       '<div class="toolbar"><select id="r-type">' +
         REPORTS.map(function (r) { return '<option value="' + r.type + '">' + esc(r.label) + '</option>'; }).join('') +
       '</select>' +
@@ -1017,7 +1240,9 @@
       '<input type="date" id="r-to" />' +
       '<button class="btn btn-primary" id="r-go">Hesabatı göstər</button>' +
       '<div style="flex:1"></div>' +
-      '<button class="btn btn-secondary" id="r-csv">CSV yüklə</button>' +
+      '<button class="btn btn-primary" id="r-xlsx" data-label="Excel (.xlsx)">📊 Excel</button>' +
+      '<button class="btn btn-secondary" id="r-csv" data-label="CSV">📄 CSV</button>' +
+      '<button class="btn btn-outline" id="r-pdf" data-label="PDF">📕 PDF</button>' +
       '</div>' +
       '<div id="r-out"><div class="loader">Hesabat seçin…</div></div>';
 
@@ -1029,32 +1254,55 @@
       return p.join('&');
     };
 
+    var monthlyPath = function (format) {
+      var m = $('#m-month').value;
+      return '/reports/monthly?format=' + format + (m ? '&month=' + encodeURIComponent(m) : '');
+    };
+
+    var showReport = function (rep) {
+      var html = '<div class="panel"><div class="panel-head"><h3>' + esc(rep.title) + '</h3>' +
+        '<div class="spacer"></div><span class="small muted">' + esc(rep.subtitle || '') +
+        ' · ' + dateTime(rep.generatedAt) + '</span></div><div class="panel-body flush">';
+      (rep.sections || []).forEach(function (s) {
+        var hasTotals = Boolean(s.totals);
+        html += '<div class="panel-head" style="background:var(--primary-light)"><h3 style="font-size:13px">' +
+          esc(s.heading) + '</h3></div>' +
+          table(s.columns.map(function (c, i) { return { label: c, num: i > 0 }; }),
+            s.rows.map(function (r) {
+              return r.map(function (c, i) { return i === 0 ? esc(c) : '<span class="mono">' + esc(c) + '</span>'; });
+            }).concat(hasTotals ? [s.totals.map(function (c, i) {
+              return '<strong>' + (i === 0 ? esc(c) : '<span class="mono">' + esc(c) + '</span>') + '</strong>';
+            })] : []), 'Boş');
+      });
+      return html + '</div></div>';
+    };
+
     $('#r-go').addEventListener('click', function () {
       var out = $('#r-out');
       out.innerHTML = '<div class="loader">Yüklənir…</div>';
       api('GET', '/reports?' + params())
-        .then(function (rep) {
-          var html = '<div class="panel"><div class="panel-head"><h3>' + esc(rep.title) + '</h3>' +
-            '<div class="spacer"></div><span class="small muted">' + esc(rep.subtitle || '') +
-            ' · ' + dateTime(rep.generatedAt) + '</span></div><div class="panel-body flush">';
-          (rep.sections || []).forEach(function (s) {
-            html += '<div class="panel-head" style="background:var(--primary-light)"><h3 style="font-size:13px">' +
-              esc(s.heading) + '</h3></div>' +
-              table(s.columns.map(function (c, i) { return { label: c, num: i > 0 }; }),
-                s.rows.map(function (r) {
-                  return r.map(function (c, i) { return i === 0 ? esc(c) : '<span class="mono">' + esc(c) + '</span>'; });
-                }), 'Boş');
-          });
-          view.querySelector('#r-out').innerHTML = html + '</div></div>';
-        })
+        .then(function (rep) { out.innerHTML = showReport(rep); })
         .catch(function (e) { out.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>'; });
     });
 
-    $('#r-csv').addEventListener('click', function () {
-      // Fetched through fetch() so the Authorization header can be attached.
-      api('GET', '/reports?' + params() + '&format=csv')
-        .catch(function () { return null; })
-        .then(function () { window.open(API + '/reports?' + params() + '&format=csv', '_blank'); });
+    $('#m-view').addEventListener('click', function () {
+      var out = $('#r-out');
+      out.innerHTML = '<div class="loader">Yüklənir…</div>';
+      var q = $('#m-month').value ? '?month=' + encodeURIComponent($('#m-month').value) : '';
+      api('GET', '/reports/monthly' + q)
+        .then(function (rep) { out.innerHTML = showReport(rep); })
+        .catch(function (e) { out.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>'; });
+    });
+
+    $('#r-xlsx').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=xlsx', 'hesabat.xlsx'); });
+    $('#r-csv').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=csv', 'hesabat.csv'); });
+    $('#r-pdf').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=pdf', 'hesabat.pdf'); });
+
+    $$('#view button[data-mf]').forEach(function (b) {
+      b.dataset.label = b.textContent;
+      b.addEventListener('click', function () {
+        downloadReport(monthlyPath(b.dataset.mf), 'ayliq-hesabat.' + b.dataset.mf);
+      });
     });
   }
 

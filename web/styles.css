@@ -349,4 +349,54 @@ td.actions { white-space: nowrap; }
   .sidebar.open { left: 0; box-shadow: 0 0 24px rgba(0, 0, 0, 0.3); }
   .view { padding: 14px; }
   .kv { grid-template-columns: 1fr; }
+  .kv dt { margin-top: 6px; }
+
+  /* Two columns instead of three on a phone: a one-card-per-row grid turns a
+     dashboard into an endless scroll. */
+  .cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .card { padding: 11px 12px; }
+  .card-value { font-size: 19px; }
+  .card-value.sm { font-size: 15px; }
+  .card-label { font-size: 11px; }
+
+  .topbar { padding: 10px 12px; }
+  .page-title { font-size: 16px; }
+  .topbar-meta { display: none; }
+
+  .panel-head { padding: 10px 12px; }
+  .panel-body { padding: 12px; }
+
+  /* Touch targets must stay large enough to hit with a thumb. */
+  .btn { padding: 10px 14px; }
+  .btn-sm { padding: 8px 11px; }
+  /* 16px stops iOS from zooming the viewport when a field is focused. */
+  input, select, textarea { padding: 11px 12px; font-size: 16px; }
+
+  .toolbar { gap: 7px; }
+  .toolbar input, .toolbar select { min-width: 0; flex: 1 1 140px; }
+  .toolbar .btn { flex: 1 1 auto; }
+
+  /* A bottom sheet reads better than a centred dialog on a phone. */
+  .modal { padding: 0; align-items: flex-end; }
+  .modal-card { max-width: 100%; max-height: 94vh; border-radius: 14px 14px 0 0; }
+  .modal-foot { position: sticky; bottom: 0; background: var(--surface); }
+  .modal-foot .btn { flex: 1; }
+
+  .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+
+  /* Every table already sits in a horizontal scroll container; it only needs a
+     minimum width so the columns stay legible instead of being crushed. */
+  .table-wrap { -webkit-overflow-scrolling: touch; }
+  table { min-width: 560px; }
+  th, td { padding: 9px 10px; }
 }
+
+/* Tapping the dimmed area closes the drawer. Without it the menu can stay open
+   over the content and there is no obvious way out on a small screen. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 30, 40, 0.45);
+  z-index: 25;
+}
+@media (min-width: 861px) { .scrim { display: none; } }

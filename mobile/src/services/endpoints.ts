@@ -169,23 +169,44 @@ export const inventoryApi = {
 
 // --------------------------------- reports ---------------------------------
 
+export type ReportFormat = 'csv' | 'pdf' | 'xlsx';
+
 export const reportsApi = {
   json: (params: ReportParams) =>
     apiClient.get<Report>('/reports', { ...params, format: 'json' } as Record<string, unknown>),
 
   /**
-   * Fetches a CSV/PDF export as text (base64 for binary PDF).
-   * The endpoint returns the file with Content-Disposition; we surface the raw
-   * body so the caller can save/share it.
+   * The dedicated monthly report. `month` is "YYYY-MM", "last", or omitted for
+   * the current month. Kept as a separate endpoint so the phone and the web
+   * resolve "this month" identically instead of each building a date range.
    */
-  async raw(params: ReportParams & { format: 'csv' | 'pdf' }): Promise<{ body: string; base64: boolean; filename: string }> {
+  monthly: (params: { month?: string; format?: string }) =>
+    apiClient.get<Report>('/reports/monthly', params as Record<string, unknown>),
+
+  /**
+   * Fetches a CSV/PDF/XLSX export.
+   * The endpoint returns the file with Content-Disposition; we surface the raw
+   * body so the caller can save/share it. Path lets the caller target either
+   * /reports or /reports/monthly.
+   */
+  async raw(
+    params: ReportParams & { format: ReportFormat; month?: string; monthly?: boolean },
+  ): Promise<{ body: string; base64: boolean; filename: string }> {
     const { withQuery } = await import('./api');
     const tokens = await (await import('./secureStorage')).loadTokens();
-    const url = `${apiClient.getBaseUrl()}/reports${withQuery('', params as unknown as Record<string, unknown>)}`;
+    const path = params.monthly ? '/reports/monthly' : '/reports';
+    const url = `${apiClient.getBaseUrl()}${path}${withQuery('', params as unknown as Record<string, unknown>)}`;
+
+    const accept =
+      params.format === 'pdf'
+        ? 'application/pdf'
+        : params.format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv';
 
     const response = await fetch(url, {
       headers: {
-        Accept: params.format === 'pdf' ? 'application/pdf' : 'text/csv',
+        Accept: accept,
         ...(tokens ? { Authorization: `Bearer ${tokens.accessToken}` } : {}),
       },
     });
@@ -210,7 +231,8 @@ export const reportsApi = {
       return { body: await response.text(), base64: false, filename };
     }
 
-    // PDF is binary: base64-encode it so it survives the string-only share sheet.
+    // PDF and XLSX are binary: base64-encode so they survive the string-only
+    // share sheet.
     const buffer = await response.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     return { body: base64Encode(bytes), base64: true, filename };
