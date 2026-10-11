@@ -27,6 +27,15 @@ backups/
 # logs
 logs/
 *.log
+
+# credentials written to disk by the tooling (git remote auth, deploy tokens)
+*.pid
+gitcreds
+gh_token.txt
+vtok.txt
+tok.txt
+adminpw.txt
+.env.*
 npm-debug.log*
 
 # tooling
