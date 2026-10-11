@@ -6,6 +6,7 @@ import { actorOf } from '../common/utils/actor';
 import { reportSchema } from '../common/schemas';
 import { buildReport, reportToCsv, reportToPdf } from './reports.service';
 import { reportToXlsx, monthName } from './reports.xlsx';
+import { reportToXls } from './reports.xls';
 import { startOfLocalMonth, endOfLocalMonth, tzOffsetMinutes } from '../common/utils/date';
 
 export const reportsRouter = Router();
@@ -93,6 +94,14 @@ reportsRouter.get(
       return;
     }
 
+    if (format === 'xls') {
+      const buffer = reportToXls(report);
+      res.setHeader('Content-Type', 'application/vnd.ms-excel');
+      res.setHeader('Content-Disposition', `attachment; filename="${base}.xls"`);
+      res.end(buffer);
+      return;
+    }
+
     res.json({ data: report, meta: { month: label } });
   }),
 );
@@ -121,7 +130,7 @@ reportsRouter.get(
       to?: string;
       workerId?: string;
       customerId?: string;
-      format: 'json' | 'csv' | 'pdf' | 'xlsx';
+      format: 'json' | 'csv' | 'pdf' | 'xlsx' | 'xls';
     };
 
     const report = await buildReport(query, actorOf(req));
@@ -131,6 +140,15 @@ reportsRouter.get(
       const buffer = await reportToXlsx(report);
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
+      res.setHeader('Content-Length', String(buffer.length));
+      res.end(buffer);
+      return;
+    }
+
+    if (query.format === 'xls') {
+      const buffer = reportToXls(report);
+      res.setHeader('Content-Type', 'application/vnd.ms-excel');
+      res.setHeader('Content-Disposition', `attachment; filename="${base}.xls"`);
       res.setHeader('Content-Length', String(buffer.length));
       res.end(buffer);
       return;

@@ -33,7 +33,7 @@ const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
   { value: 'all', label: 'Hamısı' },
 ];
 
-type ExportFormat = 'csv' | 'pdf' | 'xlsx';
+type ExportFormat = 'csv' | 'pdf' | 'xlsx' | 'xls';
 
 /** Months offered by the monthly report picker, most recent first. */
 const monthOptions = (count: number): Array<{ value: string; label: string }> => {
@@ -140,8 +140,17 @@ export const ReportsScreen: React.FC = () => {
           ))}
         </View>
 
-        {/* Excel is the primary export: it is what the owner actually opens. */}
+        {/* .xls first: it is the format older Excel installs open natively. */}
         <View style={styles.exportRow}>
+          <Button
+            mode="contained"
+            icon="file-excel"
+            loading={exportAction.submitting}
+            onPress={() => void onExport({ format: 'xls' })}
+            style={styles.exportBtn}
+          >
+            .xls
+          </Button>
           <Button
             mode="contained"
             icon="file-delimited"
@@ -149,7 +158,7 @@ export const ReportsScreen: React.FC = () => {
             onPress={() => void onExport({ format: 'xlsx' })}
             style={styles.exportBtn}
           >
-            Excel
+            .xlsx
           </Button>
           <Button
             mode="contained-tonal"
@@ -193,12 +202,21 @@ export const ReportsScreen: React.FC = () => {
           <View style={styles.monthActions}>
             <Button
               mode="contained"
+              icon="file-excel"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'xls', monthly: true, month })}
+              style={styles.exportBtn}
+            >
+              .xls
+            </Button>
+            <Button
+              mode="contained"
               icon="file-delimited"
               loading={exportAction.submitting}
               onPress={() => void onExport({ format: 'xlsx', monthly: true, month })}
               style={styles.exportBtn}
             >
-              Excel
+              .xlsx
             </Button>
             <Button
               mode="contained-tonal"

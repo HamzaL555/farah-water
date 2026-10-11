@@ -261,8 +261,9 @@ export const reportSchema = z.object({
   to: dateFromQuery,
   workerId: z.string().uuid().optional(),
   customerId: z.string().uuid().optional(),
-  // 'xlsx' is the styled Excel workbook; 'csv' stays for plain data interchange.
-  format: z.enum(['json', 'csv', 'pdf', 'xlsx']).default('json'),
+  // 'xlsx' is the styled modern workbook; 'xls' is the legacy Excel 97-2003
+  // format that older Excel installs and office packages open natively.
+  format: z.enum(['json', 'csv', 'pdf', 'xlsx', 'xls']).default('json'),
   /** Only used by /reports/monthly: "YYYY-MM", or "last", or omitted for now. */
   month: z.string().regex(/^(\d{4}-\d{2}|last)$/).optional(),
 });

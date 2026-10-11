@@ -212,8 +212,8 @@ export interface ReportParams extends RangeParams {
   type: 'daily' | 'period' | 'worker' | 'customer' | 'inventory' | 'payments' | 'deliveries';
   workerId?: string;
   customerId?: string;
-  /** 'xlsx' is the styled Excel workbook; 'csv' stays for plain interchange. */
-  format?: 'json' | 'csv' | 'pdf' | 'xlsx';
+  /** 'xlsx' is the styled modern workbook; 'xls' is legacy Excel 97-2003. */
+  format?: 'json' | 'csv' | 'pdf' | 'xlsx' | 'xls';
   /** Only meaningful on /reports/monthly: "YYYY-MM", "last", or omitted. */
   month?: string;
 }

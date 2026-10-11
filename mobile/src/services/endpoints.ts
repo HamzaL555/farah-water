@@ -169,7 +169,7 @@ export const inventoryApi = {
 
 // --------------------------------- reports ---------------------------------
 
-export type ReportFormat = 'csv' | 'pdf' | 'xlsx';
+export type ReportFormat = 'csv' | 'pdf' | 'xlsx' | 'xls';
 
 export const reportsApi = {
   json: (params: ReportParams) =>
@@ -202,7 +202,9 @@ export const reportsApi = {
         ? 'application/pdf'
         : params.format === 'xlsx'
           ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-          : 'text/csv';
+          : params.format === 'xls'
+            ? 'application/vnd.ms-excel'
+            : 'text/csv';
 
     const response = await fetch(url, {
       headers: {
@@ -225,7 +227,11 @@ export const reportsApi = {
 
     const disposition = response.headers.get('Content-Disposition') ?? '';
     const filenameMatch = /filename="?([^"]+)"?/.exec(disposition);
-    const filename = filenameMatch?.[1] ?? `farah-report.${params.format}`;
+    // Force the extension the caller asked for: the server slugifies titles, so
+    // the returned name can carry the wrong suffix and the user would end up
+    // with a file Excel will not open.
+    const baseName = (filenameMatch?.[1] ?? `farah-report`).replace(/\.[a-z0-9]+$/i, '');
+    const filename = `${baseName}.${params.format}`;
 
     if (params.format === 'csv') {
       return { body: await response.text(), base64: false, filename };

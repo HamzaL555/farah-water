@@ -1165,7 +1165,7 @@
    * is turned into an object URL and released afterwards so repeated exports
    * do not leak memory.
    */
-  async function downloadReport(path, fallbackName) {
+  async function downloadReport(path, fallbackName, expectedExt) {
     var btn = document.activeElement;
     if (btn && btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = 'Yüklənir…'; }
     try {
@@ -1181,6 +1181,13 @@
       var cd = res.headers.get('content-disposition') || '';
       var m = /filename="([^"]+)"/.exec(cd);
       if (m) name = m[1];
+
+      // The server's slugified name is used as-is, but the extension must match
+      // what the button promised: a .xls download that lands as ".xls.txt" is
+      // worse than no download.
+      if (expectedExt) {
+        name = name.replace(/\.[a-z0-9]+$/i, '') + expectedExt;
+      }
 
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -1224,9 +1231,10 @@
         '</select></div>' +
         '<div class="panel-body">' +
           '<div class="toolbar" style="margin-bottom:0">' +
-            '<button class="btn btn-primary" data-mf="xlsx" data-ml="Aylıq hesabat — Excel">📊 Excel (.xlsx)</button>' +
-            '<button class="btn btn-secondary" data-mf="csv" data-ml="Aylıq hesabat — CSV">📄 CSV</button>' +
-            '<button class="btn btn-outline" data-mf="pdf" data-ml="Aylıq hesabat — PDF">📕 PDF</button>' +
+            '<button class="btn btn-primary" data-mf="xls" data-ml="Excel 97 (.xls)">📗 Excel (.xls)</button>' +
+            '<button class="btn btn-secondary" data-mf="xlsx" data-ml="Excel (.xlsx)">📊 Excel (.xlsx)</button>' +
+            '<button class="btn btn-outline" data-mf="csv" data-ml="CSV">📄 CSV</button>' +
+            '<button class="btn btn-outline" data-mf="pdf" data-ml="PDF">📕 PDF</button>' +
             '<div style="flex:1"></div>' +
             '<button class="btn btn-outline" id="m-view">Ekranda gör</button>' +
           '</div>' +
@@ -1240,7 +1248,8 @@
       '<input type="date" id="r-to" />' +
       '<button class="btn btn-primary" id="r-go">Hesabatı göstər</button>' +
       '<div style="flex:1"></div>' +
-      '<button class="btn btn-primary" id="r-xlsx" data-label="Excel (.xlsx)">📊 Excel</button>' +
+      '<button class="btn btn-primary" id="r-xls" data-label="Excel 97 (.xls)">📗 .xls</button>' +
+      '<button class="btn btn-primary" id="r-xlsx" data-label="Excel (.xlsx)">📊 .xlsx</button>' +
       '<button class="btn btn-secondary" id="r-csv" data-label="CSV">📄 CSV</button>' +
       '<button class="btn btn-outline" id="r-pdf" data-label="PDF">📕 PDF</button>' +
       '</div>' +
@@ -1294,14 +1303,16 @@
         .catch(function (e) { out.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>'; });
     });
 
-    $('#r-xlsx').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=xlsx', 'hesabat.xlsx'); });
-    $('#r-csv').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=csv', 'hesabat.csv'); });
-    $('#r-pdf').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=pdf', 'hesabat.pdf'); });
+    $('#r-xls').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=xls', 'hesabat.xls', '.xls'); });
+    $('#r-xlsx').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=xlsx', 'hesabat.xlsx', '.xlsx'); });
+    $('#r-csv').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=csv', 'hesabat.csv', '.csv'); });
+    $('#r-pdf').addEventListener('click', function () { downloadReport('/reports?' + params() + '&format=pdf', 'hesabat.pdf', '.pdf'); });
 
     $$('#view button[data-mf]').forEach(function (b) {
       b.dataset.label = b.textContent;
       b.addEventListener('click', function () {
-        downloadReport(monthlyPath(b.dataset.mf), 'ayliq-hesabat.' + b.dataset.mf);
+        var ext = b.dataset.mf === 'xls' ? '.xls' : '.' + b.dataset.mf;
+        downloadReport(monthlyPath(b.dataset.mf), 'ayliq-hesabat' + ext, ext);
       });
     });
   }
