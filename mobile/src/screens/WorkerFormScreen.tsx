@@ -164,7 +164,7 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
           {!editingId ? (
             <>
               <PaperInput
-                label="Şifrə (boş qoysan, sistem yaradacaq)"
+                label="Şifrə"
                 value={password}
                 onChangeText={(t) => setPassword(t.replace(/\s/g, ''))}
                 mode="outlined"
@@ -173,7 +173,16 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
                 error={Boolean(passwordError)}
                 style={styles.input}
               />
-              {passwordError ? <HelperText type="error">{passwordError}</HelperText> : null}
+              {/* The hint lives below the field, not inside its label: a long
+                  label is clipped to "Şifrə (boş qoysan..." on a narrow phone
+                  and reads as a broken field rather than an instruction. */}
+              {passwordError ? (
+                <HelperText type="error">{passwordError}</HelperText>
+              ) : (
+                <HelperText type="info" style={styles.hint}>
+                  Boş qoysan, sistem özü güclü şifrə yaradacaq.
+                </HelperText>
+              )}
             </>
           ) : (
             <View style={styles.switchRow}>
@@ -239,8 +248,11 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  scroll: { padding: spacing.md },
+  // Extra bottom padding: the password field is the last control, and without
+  // room to scroll past it the keyboard covers it and it looks missing.
+  scroll: { padding: spacing.md, paddingBottom: spacing.xxl * 2 },
   input: { backgroundColor: colors.surface, marginBottom: spacing.xs },
+  hint: { marginBottom: spacing.sm, marginTop: -2 },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',

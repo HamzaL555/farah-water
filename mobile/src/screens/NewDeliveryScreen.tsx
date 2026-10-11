@@ -151,7 +151,7 @@ export const NewDeliveryScreen: React.FC = () => {
 
           <Text style={styles.sectionTitle}>Müştəri</Text>
           <PaperInput
-            label="Müştəri axtar (ad və ya telefon)"
+            label="Müştəri axtar"
             value={customerQuery}
             onChangeText={(text) => {
               setCustomerQuery(text);
@@ -205,14 +205,13 @@ export const NewDeliveryScreen: React.FC = () => {
               />
               {nameError ? <HelperText type="error">{nameError}</HelperText> : null}
               <PaperInput
-                label="Müştərinin telefonu (istəyə bağlı)"
+                label="Müştərinin telefonu"
                 value={customerPhone}
                 onChangeText={setCustomerPhone}
                 mode="outlined"
                 keyboardType="phone-pad"
                 style={styles.input}
-              />
-            </>
+              />            </>
           )}
 
           <Divider style={styles.divider} />
@@ -230,7 +229,7 @@ export const NewDeliveryScreen: React.FC = () => {
           {addressError ? <HelperText type="error">{addressError}</HelperText> : null}
 
           <PaperInput
-            label="Əlaqə nömrəsi (istəyə bağlı)"
+            label="Əlaqə nömrəsi"
             value={contactPhone}
             onChangeText={setContactPhone}
             mode="outlined"
@@ -262,7 +261,7 @@ export const NewDeliveryScreen: React.FC = () => {
           {priceError ? <HelperText type="error">{priceError}</HelperText> : null}
 
           <PaperInput
-            label="Çatdırılma tarixi (YYYY-AA-GG)"
+            label="Çatdırılma tarixi"
             value={deliveredAt}
             onChangeText={setDeliveredAt}
             mode="outlined"
