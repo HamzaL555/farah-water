@@ -43,3 +43,6 @@ tools/tunnel.err
 tools/backend.log
 tools/backend.err
 tools/cloudflared.exe
+
+# transient local tunnel state - machine-specific, never source-controlled
+tools/public-url.txt

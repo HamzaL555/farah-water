@@ -2,7 +2,12 @@
 import { describe, it, expect } from 'vitest';
 import { assertSafeTestDatabase } from '../helpers/test-db-guard';
 
-const PROD = 'postgresql://user:pw@ep-ancient-cell-batkexdw-pooler.c-8.eu-central-1.aws.neon.tech/neondb?sslmode=require';
+/**
+ * A representative managed-host URL. Deliberately not the real deployment
+ * host: this file is committed to a public repository and a hostname is still
+ * an unnecessary disclosure.
+ */
+const PROD = 'postgresql://user:pw@ep-example123-pooler.c-99.eu-central-1.aws.neon.tech/proddb?sslmode=require';
 
 describe('test database guard', () => {
   it('rejects the live Neon URL outright, with no opt-in available', () => {
