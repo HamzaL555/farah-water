@@ -191,6 +191,17 @@
       err.status = r.status;
       throw err;
     }
+
+    // Recorded so the auto-refresh can tell "same data" from "new data"
+    // without diffing the DOM.
+    if (capture.length < 12) {
+      try {
+        capture.push(JSON.stringify(r.json && r.json.data !== undefined ? r.json.data : r.json));
+      } catch (e) {
+        capture.push('');
+      }
+    }
+
     return r.json ? r.json.data : null;
   }
 
@@ -331,9 +342,16 @@
     $('#topbar-meta').textContent = 'Farah Su Şirkəti · ' + dateTime(new Date().toISOString());
     var view = $('#view');
     view.innerHTML = '<div class="loader">Yüklənir…</div>';
-    render(page, view).catch(function (e) {
-      view.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>';
-    });
+    // A manual navigation must paint even if the data is unchanged, so the
+    // stored signature is cleared here.
+    lastSignature[page] = null;
+    capture = [];
+    render(page, view)
+      .then(function () { lastSignature[page] = signatureOf(page); })
+      .catch(function (e) {
+        view.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>';
+      });
+    scheduleRefresh();
   }
 
   window.addEventListener('hashchange', function () {
@@ -423,6 +441,99 @@
       (opts.multiline ? 'rows="3"' : '') + ' value="' + esc(value === null || value === undefined ? '' : value) + '" />' +
       '</label>';
   }
+
+  // ==================================================== live refresh =====
+  /**
+   * The panel and the phone app share one database, so a delivery recorded on
+   * the phone is already visible here. What this was NOT doing is refreshing an
+   * open screen. This polls the active page and repaints only when the data
+   * behind it actually changed.
+   *
+   * Guard rails, because a background refresh must never fight the user:
+   *   - paused while the tab is hidden
+   *   - skipped while a dialog is open or a field has focus
+   *   - scroll position preserved across the repaint
+   *   - a short "yeni məlumat" note rather than a silent jump
+   */
+  var AUTO_REFRESH_MS = 15000;
+
+  /** Responses captured during a render, used to detect a change. */
+  var capture = [];
+  var lastSignature = {};
+
+  function signatureOf(page) {
+    return page + ':' + capture.map(function (c) { return c.length + ':' + c.slice(0, 24); }).join('|');
+  }
+
+  /** True when the user is mid-interaction and a refresh must wait. */
+  function busy() {
+    if (!$('#modal').hidden) return true;
+    var el = document.activeElement;
+    if (!el) return false;
+    var tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+
+  /**
+   * Re-renders the page only when its data changed.
+   * The probe render writes into a detached fragment, so nothing flickers unless
+   * the answer is "different".
+   */
+  async function quietlyRefresh(page) {
+    var view = $('#view');
+    if (!view) return;
+
+    capture = [];
+    try {
+      await render(page, document.createDocumentFragment());
+    } catch (e) {
+      return; // a transient network error must not blank the page
+    }
+
+    var sig = signatureOf(page);
+    if (sig === lastSignature[page]) return;
+    lastSignature[page] = sig;
+
+    var y = window.scrollY;
+    capture = [];
+    try {
+      await render(page, view);
+    } catch (e) {
+      return;
+    }
+    window.scrollTo(0, y);
+    flashLive('yeni məlumat');
+  }
+
+  var refreshTimer = null;
+  function scheduleRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(function () {
+      if (document.hidden || busy()) return;
+      var page = state.route;
+      if (!page || !canOpen(page)) return;
+      quietlyRefresh(page);
+    }, AUTO_REFRESH_MS);
+  }
+
+  var liveTimer = null;
+  function flashLive(text) {
+    var el = $('#live-tag');
+    if (!el) return;
+    el.textContent = '• ' + text;
+    el.hidden = false;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(function () { el.hidden = true; }, 4000);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    // Returning to the tab: whatever happened elsewhere while it was hidden is
+    // now worth fetching immediately rather than on the next tick.
+    if (!document.hidden && !busy() && state.route) {
+      lastSignature[state.route] = null;
+      quietlyRefresh(state.route);
+    }
+  });
 
   // ============================================================ pages ====
 

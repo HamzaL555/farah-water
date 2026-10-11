@@ -9,6 +9,7 @@ import { DeliveryRow } from '../components/DeliveryRow';
 import { EmptyState } from '../components/EmptyState';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { useAsync } from '../hooks/useAsync';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../services/endpoints';
 import { formatMoney } from '../utils/format';
@@ -28,6 +29,13 @@ export const WorkerHomeScreen: React.FC = () => {
     useCallback(() => {
       void run(false);
     }, [run]),
+  );
+
+  // ...and keep refreshing while the screen sits open, so a delivery recorded
+  // on the web panel, or by another worker, appears without any interaction.
+  useAutoRefresh(
+    useCallback(() => run(false), [run]),
+    30_000,
   );
 
   if (loading && !data) {

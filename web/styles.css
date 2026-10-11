@@ -171,6 +171,18 @@ input:focus, select:focus, textarea:focus {
 }
 .page-title { margin: 0; font-size: 18px; color: var(--primary-dark); }
 .topbar-meta { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+/* Shown for a few seconds after the page repaints itself because data
+   changed elsewhere (phone, another user) while this tab sat open. */
+.live-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success);
+  background: var(--success-bg);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
 .menu-toggle {
   display: none;
   border: 0;

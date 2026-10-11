@@ -8,6 +8,7 @@ import { StatCard } from '../components/StatCard';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { EmptyState } from '../components/EmptyState';
 import { useAsync } from '../hooks/useAsync';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { dashboardApi } from '../services/endpoints';
 import { formatMoney } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
@@ -45,6 +46,13 @@ export const AdminHomeScreen: React.FC = () => {
     useCallback(() => {
       void run(false);
     }, [run]),
+  );
+
+  // Keep the dashboard live while it is open: a delivery recorded by a worker
+  // should appear here without the admin touching anything.
+  useAutoRefresh(
+    useCallback(() => run(false), [run]),
+    30_000,
   );
 
   if (loading && !data) {
