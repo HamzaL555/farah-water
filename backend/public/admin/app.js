@@ -363,6 +363,8 @@
   function openModal(title, bodyHtml, footButtons) {
     $('#modal-title').textContent = title;
     $('#modal-body').innerHTML = bodyHtml;
+    $('#modal-error').hidden = true;
+    $('#modal-error').textContent = '';
     var foot = $('#modal-foot');
     foot.innerHTML = '';
     (footButtons || [{ label: 'Bağla', kind: 'outline' }]).forEach(function (b) {
@@ -372,7 +374,14 @@
       btn.addEventListener('click', function () {
         if (b.onClick) {
           btn.disabled = true;
-          Promise.resolve(b.onClick(btn)).catch(function () {}).then(function () {
+          // Show the failure instead of swallowing it. A silently rejected
+          // submit is indistinguishable from a button that does nothing.
+          $('#modal-error').hidden = true;
+          Promise.resolve(b.onClick(btn)).catch(function (e) {
+            var box = $('#modal-error');
+            box.textContent = e && e.message ? e.message : 'Xəta baş verdi.';
+            box.hidden = false;
+          }).then(function () {
             btn.disabled = false;
           });
         } else {
@@ -761,21 +770,35 @@
   function openWorkerForm() {
     openModal('Yeni işçi',
       textField('w-name', 'Ad, Soyad', '') +
-      textField('w-user', 'İstifadəçi adı (latın)', '') +
+      textField('w-user', 'İstifadəçi adı', '') +
       textField('w-phone', 'Telefon', '', { type: 'tel' }) +
       textField('w-email', 'E-mail (istəyə bağlı)', '', { type: 'email' }) +
-      '<div class="alert alert-info">Şifrə boş buraxsanız, sistem özü güclü şifrə yaradacaq və bir dəfə göstərəcək.</div>',
+      // A password field, not just a note about one: the API accepts an
+      // explicit password and the admin should be able to set one.
+      '<label class="field"><span class="field-label">Şifrə</span>' +
+        '<span class="field-wrap">' +
+          '<input id="w-pass" type="password" autocomplete="new-password" />' +
+          '<button type="button" class="eye" id="w-eye" aria-label="Şifrəni göstər">👁</button>' +
+        '</span>' +
+        '<span class="field-label" style="margin-top:5px">Boş qoysan, sistem özü güclü şifrə yaradacaq.</span>' +
+      '</label>',
       [
         { label: 'Ləğv et', kind: 'outline' },
         {
           label: 'Yarat',
           kind: 'primary',
           onClick: async function () {
+            var pass = $('#w-pass').value.trim();
+            // Mirror the server rule so the failure is not discovered on submit.
+            if (pass && (pass.length < 8 || !/[A-Za-z]/.test(pass) || !/[0-9]/.test(pass))) {
+              throw new Error('Şifrə ən azı 8 simvol olmalıdır və hərf və rəqəm içərməlidir.');
+            }
             var body = {
               fullName: $('#w-name').value.trim(),
               username: $('#w-user').value.trim(),
               phone: $('#w-phone').value.trim() || undefined,
               email: $('#w-email').value.trim() || undefined,
+              password: pass || undefined,
             };
             var d = await api('POST', '/users', body);
             closeModal();
@@ -788,6 +811,12 @@
           },
         },
       ]);
+
+    $('#w-eye').addEventListener('click', function () {
+      var p = $('#w-pass');
+      p.type = p.type === 'password' ? 'text' : 'password';
+      this.textContent = p.type === 'password' ? '\uD83D\uDC41' : '\uD83D\uDD24';
+    });
   }
 
   // ------------------------------------------------------------- stock --

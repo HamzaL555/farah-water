@@ -335,6 +335,10 @@ td.actions { white-space: nowrap; }
 }
 .icon-btn:hover { background: #eef2f5; }
 .modal-body { padding: 18px; overflow-y: auto; }
+/* The error sits outside the scrollable body so a failure on a long form is
+   still visible without scrolling back up to it. */
+.modal-error { margin: 0 18px 12px; }
+.field-wrap input { padding-right: 42px; }
 .modal-foot {
   padding: 12px 18px;
   border-top: 1px solid var(--border);
