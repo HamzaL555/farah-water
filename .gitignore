@@ -19,6 +19,11 @@ google-services.json
 # built artefacts (the release APK is distributed, not source-controlled)
 release/
 
+# Database backups contain real customer names, phone numbers and addresses.
+# This repository is public, so they must never be committed. Store them
+# somewhere private and keep only the scripts that produce them.
+backups/
+
 # logs
 logs/
 *.log
