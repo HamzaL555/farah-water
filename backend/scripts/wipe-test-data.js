@@ -35,6 +35,11 @@ const GUARD_TRIGGERS = [
 
   let guardsOff = false;
   try {
+    // The default interactive transaction timeout is 5s. This does a dozen DDL
+    // statements plus a full audit-log delete against a networked database, so
+    // the default expires mid-run and aborts the whole thing. 120s leaves room
+    // for a slow link without ever being long enough to hold locks on a live
+    // system for an unreasonable time.
     await prisma.$transaction(async (tx) => {
       // 1. Lift the delete guards (session-scoped to this transaction).
       for (const t of GUARD_TRIGGERS) {
@@ -90,13 +95,17 @@ const GUARD_TRIGGERS = [
 
       console.log('\ndeleted:');
       steps.forEach((s) => console.log(`  ${s}`));
-    });
+    }, { timeout: 120000, maxWait: 20000 });
 
     console.log('\nWIPE COMPLETE');
   } catch (e) {
     console.error('\nFAILED:', e.message);
     if (guardsOff) {
-      console.error('Guards were left disabled by the aborted transaction.');
+      // Not actually a risk: ALTER TABLE ... DISABLE TRIGGER is transactional in
+      // PostgreSQL, so an aborted transaction restores the guards with it. This
+      // flag only tells us where the run died.
+      console.error('The transaction aborted. The guards were rolled back with it,');
+      console.error('but confirm with: node scripts/verify-triggers.js');
     }
     process.exitCode = 1;
   } finally {

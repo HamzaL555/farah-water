@@ -61,15 +61,20 @@ const line = (ok, label, detail) => {
     line(r?.status === 200, label, p);
   }
 
-  console.log('\n=== 4. İŞÇİ GİRİŞİ ===');
-  const worker = await fetch(`${API}/users`, { headers: auth }).then((r) => r.json()).catch(() => null);
-  const w = worker?.data?.items?.find((x) => x.role === 'WORKER');
-  line(Boolean(w), 'worker account exists', w ? `${w.fullName} (${w.username})` : 'none');
+  console.log('\n=== 4. İŞÇİ HESABI ===');
+  const worker = await fetch(`${API}/users`, { headers: auth }).catch(() => null);
+  line(worker?.status === 200, 'user list endpoint', `HTTP ${worker?.status ?? 'no response'}`);
+  const w = (await worker?.json().catch(() => null))?.data?.items?.find((x) => x.role === 'WORKER');
+
+  // A system with no workers yet is a normal state, not a broken one: the admin
+  // creates the first worker when there is someone to drive. Requiring one here
+  // meant a clean install always reported a failure, which trains you to ignore
+  // the health check - the worst outcome for the one page meant to tell you
+  // something is actually wrong.
   if (w) {
-    const blocked = await fetch(`${API}/users`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    void blocked;
+    line(true, 'worker account exists', `${w.fullName} (${w.username})`);
+  } else {
+    console.log(`  note  ${'no worker account yet'.padEnd(34)} yoxdur - "İşçilər" bolmesinden yaradilir`);
   }
 
   console.log('\n=== 5. HESABATLAR ===');
