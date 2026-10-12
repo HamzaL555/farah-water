@@ -72,10 +72,13 @@ export const NewDeliveryScreen: React.FC = () => {
     [companies, companyId],
   );
   const offices = company?.offices ?? [];
+  const isAdmin = user?.role === 'ADMIN';
+  // A worker is not told the price. The company prices come back as null for
+  // them, so this cannot drift into showing something the API withheld.
   const unitPrice = useMemo(() => {
-    if (destinationType !== 'COMPANY' || !company) return 0;
-    return waterType === 'SPRING' ? company.springPrice : company.filteredPrice;
-  }, [destinationType, company, waterType]);
+    if (destinationType !== 'COMPANY' || !company || !isAdmin) return 0;
+    return waterType === 'SPRING' ? (company.springPrice ?? 0) : (company.filteredPrice ?? 0);
+  }, [destinationType, company, waterType, isAdmin]);
 
   const count = parseInt(bottleCount || '0', 10);
   const total = Math.round(count * unitPrice * 100) / 100;
@@ -231,12 +234,15 @@ export const NewDeliveryScreen: React.FC = () => {
                     ))}
                   </View>
                   {officeError ? <HelperText type="error">{officeError}</HelperText> : null}
-                  <View style={styles.priceNote}>
-                    <Text style={styles.priceNoteText}>
-                      Qiymət avtomatik: <Text style={styles.priceNoteStrong}>{formatMoney(unitPrice)} AZN</Text> / bidon.
-                      {'\n'}Admin qiyməti və ödənilən pulu sonra yazacaq.
-                    </Text>
-                  </View>
+                  {isAdmin ? (
+                    <View style={styles.priceNote}>
+                      <Text style={styles.priceNoteText}>
+                        Qiymət avtomatik:{' '}
+                        <Text style={styles.priceNoteStrong}>{formatMoney(unitPrice)} AZN</Text> / bidon.{'\n'}
+                        Admin qiyməti və ödənilən pulu sonra yazacaq.
+                      </Text>
+                    </View>
+                  ) : null}
                 </>
               ) : null}
             </>
@@ -344,7 +350,7 @@ export const NewDeliveryScreen: React.FC = () => {
           />
           {countError ? <HelperText type="error">{countError}</HelperText> : null}
 
-          {destinationType === 'COMPANY' && company ? (
+          {destinationType === 'COMPANY' && company && isAdmin ? (
             <View style={styles.priceNote}>
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>{count} bidon × {formatMoney(unitPrice)}</Text>

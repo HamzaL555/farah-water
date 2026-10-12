@@ -8,12 +8,25 @@
  *
  * Run with --yes to confirm. Everything runs in ONE transaction: either the
  * database is clean afterwards, or nothing changed at all.
+ *
+ * `--expect-workers=a,b` lists the worker accounts the run is SUPPOSED to
+ * remove. Without it the script refuses to touch any worker at all, because a
+ * silent `--yes` that deletes a real driver's account is the worst thing a
+ * maintenance script can do, and it has happened: a worker created on the
+ * live database was deleted by a routine cleanup run pointed at it.
  */
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 
 const CONFIRMED = process.argv.includes('--yes');
 const prisma = new PrismaClient();
+
+/** Worker accounts this run is allowed to delete. Empty means "none". */
+function expectedWorkers() {
+  const arg = process.argv.find((a) => a.startsWith('--expect-workers='));
+  if (!arg) return null;
+  return arg.slice('--expect-workers='.length).split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 // Blocked by farah_prevent_financial_delete(); only the first three can fire
 // for rows we touch. The admin-deactivation trigger is a BEFORE UPDATE and is
@@ -53,10 +66,28 @@ const GUARD_TRIGGERS = [
 
       // 2. Collect the ids we are allowed to remove (everything except admin).
       const workers = await tx.user.findMany({ where: { id: { not: admin.id } }, select: { id: true, username: true } });
+
+      // A worker account is a real person. Deleting one is not something a
+      // script should do on a bare --yes, so each one has to be named.
+      const allowed = expectedWorkers();
+      const unexpected = allowed === null
+        ? workers
+        : workers.filter((w) => !allowed.includes(w.username));
+      if (unexpected.length > 0) {
+        throw new Error(
+          `REFUSING TO RUN. These worker accounts exist but were not named in --expect-workers:\n` +
+            `  ${unexpected.map((w) => w.username).join(', ')}\n\n` +
+            `A real driver must not be deleted by a cleanup run. Name only the test\n` +
+            `accounts to remove, and deactivate a worker you mean to keep:\n` +
+            `  node scripts/deactivate-user.js <username>`,
+        );
+      }
+
       const workerIds = workers.map((w) => w.id);
       const customers = await tx.customer.findMany({ select: { id: true, name: true } });
       const customerIds = customers.map((c) => c.id);
 
+      console.log(`keeping admin: ${admin.username}`);
       console.log(`workers to remove  (${workers.length}): ${workers.map((w) => w.username).join(', ') || 'none'}`);
       console.log(`customers to remove (${customers.length}): ${customers.map((c) => c.name).join(', ') || 'none'}`);
 

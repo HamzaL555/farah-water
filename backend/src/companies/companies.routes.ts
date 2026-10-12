@@ -15,10 +15,15 @@ companiesRouter.use(requireAuth);
  * The company list with its offices, for the delivery form's cascading
  * picker. Open to workers: a driver picking where to deliver needs to read
  * this. Editing it is admin-only, which is the split below.
+ *
+ * Prices are admin-only. A worker is told what to deliver and where, and the
+ * amount is the owner's business - so the number is withheld here rather than
+ * merely hidden in the UI, which any client could read around.
  */
 companiesRouter.get(
   '/',
   asyncHandler(async (req, res) => {
+    const isAdmin = actorOf(req).role === Role.ADMIN;
     const activeOnly = req.query.all !== '1';
     const rows = await prisma.company.findMany({
       where: activeOnly ? { isActive: true } : undefined,
@@ -37,9 +42,10 @@ companiesRouter.get(
         id: c.id,
         name: c.name,
         // Money leaves as a number: a Decimal would serialise as a string and
-        // every client would have to parse it back.
-        filteredPrice: Number(c.filteredPrice.toFixed(2)),
-        springPrice: Number(c.springPrice.toFixed(2)),
+        // every client would have to parse it back. Null means "not yours to
+        // see", never "free".
+        filteredPrice: isAdmin ? Number(c.filteredPrice.toFixed(2)) : null,
+        springPrice: isAdmin ? Number(c.springPrice.toFixed(2)) : null,
         isActive: c.isActive,
         offices: c.offices,
       })),

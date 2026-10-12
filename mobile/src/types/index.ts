@@ -114,8 +114,12 @@ export interface Office {
 export interface Company {
   id: string;
   name: string;
-  filteredPrice: number;
-  springPrice: number;
+  /**
+   * Null unless the caller is an admin. The server withholds the price from
+   * workers, so this is not a value the driver could see by asking harder.
+   */
+  filteredPrice: number | null;
+  springPrice: number | null;
   isActive: boolean;
   offices: Office[];
 }

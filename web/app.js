@@ -14,6 +14,11 @@
   var API =
     (window.FARAH_API_URL || 'https://farah-water.vercel.app/api/v1').replace(/\/$/, '');
 
+  /** True when the signed-in account is the owner. Several screens gate on it. */
+  var isAdmin = function () {
+    return Boolean(state.user && state.user.role === 'ADMIN');
+  };
+
   var LS_TOKEN = 'farah.accessToken';
   var LS_REFRESH = 'farah.refreshToken';
   var LS_USER = 'farah.user';
@@ -376,16 +381,22 @@
       btn.addEventListener('click', function () {
         if (b.onClick) {
           btn.disabled = true;
-          // Show the failure instead of swallowing it. A silently rejected
-          // submit is indistinguishable from a button that does nothing.
           $('#modal-error').hidden = true;
-          Promise.resolve(b.onClick(btn)).catch(function (e) {
-            var box = $('#modal-error');
-            box.textContent = e && e.message ? e.message : 'Xəta baş verdi.';
-            box.hidden = false;
-          }).then(function () {
-            btn.disabled = false;
-          });
+          // The handler is called INSIDE the chain, not as its argument.
+          // `Promise.resolve(b.onClick(btn))` evaluates the call first, so a
+          // synchronous `throw` from a validation check would escape before
+          // .catch was ever attached - the error would vanish and the button
+          // would stay disabled for good, looking like a frozen app.
+          Promise.resolve()
+            .then(function () { return b.onClick(btn); })
+            .catch(function (e) {
+              var box = $('#modal-error');
+              box.textContent = e && e.message ? e.message : 'Xəta baş verdi.';
+              box.hidden = false;
+            })
+            .then(function () {
+              btn.disabled = false;
+            });
         } else {
           closeModal();
         }
@@ -1076,7 +1087,6 @@
         p.voidedAt ? '' : '<button class="btn btn-outline btn-sm" data-void="' + p.id + '">Ləğv et</button>'];
     });
 
-    var isAdmin = state.user && state.user.role === 'ADMIN';
     var destination = d.destinationType === 'COMPANY'
       ? esc((d.companyName || 'Şirkət') + (d.officeName ? ' — ' + d.officeName : ''))
       : 'Ev';
@@ -1100,7 +1110,7 @@
         '<dt>Status</dt><dd>' + statusBadge(d.status) + '</dd>' +
         (d.note ? '<dt>Qeyd</dt><dd>' + esc(d.note) + '</dd>' : '') +
       '</dl>' +
-      (isAdmin && d.status !== 'CANCELLED'
+      (isAdmin() && d.status !== 'CANCELLED'
         ? '<div class="alert alert-info">Qiyməti və alınan pulu siz yazırsınız. Borc avtomatik hesablanır.</div>'
         : '') +
       '<div class="mt">' + table([
@@ -1108,13 +1118,12 @@
       ], rows, 'Ödəniş yoxdur.') + '</div>',
       [
         { label: 'Bağla', kind: 'outline' },
-        ...(isAdmin && d.status !== 'CANCELLED'
+        ...(isAdmin() && d.status !== 'CANCELLED'
           ? [
               { label: 'Faktura', kind: 'outline', onClick: function () { closeModal(); invoice(d); } },
               { label: 'Qiymət / ödəniş', kind: 'primary', onClick: function () { closeModal(); deliveryPriceForm(d); } },
             ]
           : []),
-        ...(!isAdmin && d.status !== 'CANCELLED' ? [] : []),
       ]);
 
     $$('#modal-body button[data-void]').forEach(function (b) {
@@ -1333,7 +1342,11 @@ function newDeliveryForm() {
 
     function showPriceNote() {
       var box = $('#n-price-note');
-      if (dest !== 'COMPANY') { box.hidden = true; return; }
+      // Workers are not told the price. They record what went where; the
+      // amount is the owner's. The API withholds the number from them too, so
+      // this is about not implying what they must not rely on - not about
+      // hiding something they could fetch.
+      if (dest !== 'COMPANY' || !isAdmin()) { box.hidden = true; return; }
       var c = companies.filter(function (x) { return x.id === $('#n-company').value; })[0];
       if (!c) { box.hidden = true; return; }
       var p = currentWater() === 'SPRING' ? c.springPrice : c.filteredPrice;
