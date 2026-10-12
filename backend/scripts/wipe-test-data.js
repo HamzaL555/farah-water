@@ -21,11 +21,27 @@ const { PrismaClient } = require('@prisma/client');
 const CONFIRMED = process.argv.includes('--yes');
 const prisma = new PrismaClient();
 
-/** Worker accounts this run is allowed to delete. Empty means "none". */
+/**
+ * Worker accounts this run is allowed to delete. Empty means "none".
+ */
 function expectedWorkers() {
   const arg = process.argv.find((a) => a.startsWith('--expect-workers='));
   if (!arg) return null;
   return arg.slice('--expect-workers='.length).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Worker accounts this run must leave alone.
+ *
+ * Every worker has to end up in one of the two lists. Naming only the accounts
+ * to delete is not enough once a real driver exists: the guard would then
+ * refuse every run, and "delete everything you did not list" is precisely the
+ * behaviour that removed one.
+ */
+function keptWorkers() {
+  const arg = process.argv.find((a) => a.startsWith('--keep-workers='));
+  if (!arg) return [];
+  return arg.slice('--keep-workers='.length).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 // Blocked by farah_prevent_financial_delete(); only the first three can fire
@@ -67,28 +83,48 @@ const GUARD_TRIGGERS = [
       // 2. Collect the ids we are allowed to remove (everything except admin).
       const workers = await tx.user.findMany({ where: { id: { not: admin.id } }, select: { id: true, username: true } });
 
-      // A worker account is a real person. Deleting one is not something a
-      // script should do on a bare --yes, so each one has to be named.
-      const allowed = expectedWorkers();
-      const unexpected = allowed === null
-        ? workers
-        : workers.filter((w) => !allowed.includes(w.username));
-      if (unexpected.length > 0) {
+      // A worker account is a real person. Every one must be named, either as
+      // "delete this one" or "keep this one". Anything unnamed stops the run.
+      const toDelete = expectedWorkers();
+      const toKeep = keptWorkers();
+      const removable = toDelete === null
+        ? []
+        : workers.filter((w) => toDelete.includes(w.username));
+      const unaccountedNames = workers
+        .filter((w) => !toKeep.includes(w.username) && !removable.some((r) => r.username === w.username))
+        .map((w) => w.username);
+
+      const missing = toDelete
+        ? toDelete.filter((name) => !workers.some((w) => w.username === name))
+        : [];
+      if (missing.length > 0) {
         throw new Error(
-          `REFUSING TO RUN. These worker accounts exist but were not named in --expect-workers:\n` +
-            `  ${unexpected.map((w) => w.username).join(', ')}\n\n` +
-            `A real driver must not be deleted by a cleanup run. Name only the test\n` +
-            `accounts to remove, and deactivate a worker you mean to keep:\n` +
+          `REFUSING TO RUN. --expect-workers names accounts that do not exist:\n` +
+            `  ${missing.join(', ')}\n\n` +
+            `Usually a previous run already removed them. Nothing was changed.`,
+        );
+      }
+
+      if (unaccountedNames.length > 0) {
+        throw new Error(
+          `REFUSING TO RUN. These worker accounts exist but were not named:\n` +
+            `  ${unaccountedNames.join(', ')}\n\n` +
+            `Name each one. To delete a test account:\n` +
+            `  --expect-workers=testisci\n` +
+            `To keep a real driver:\n` +
+            `  --keep-workers=${unaccountedNames.join(',')}\n` +
+            `To stop a worker without deleting their record:\n` +
             `  node scripts/deactivate-user.js <username>`,
         );
       }
 
-      const workerIds = workers.map((w) => w.id);
+      const workerIds = removable.map((w) => w.id);
       const customers = await tx.customer.findMany({ select: { id: true, name: true } });
       const customerIds = customers.map((c) => c.id);
 
       console.log(`keeping admin: ${admin.username}`);
-      console.log(`workers to remove  (${workers.length}): ${workers.map((w) => w.username).join(', ') || 'none'}`);
+      if (toKeep.length > 0) console.log(`keeping workers: ${toKeep.join(', ')}`);
+      console.log(`workers to remove  (${removable.length}): ${removable.map((w) => w.username).join(', ') || 'none'}`);
       console.log(`customers to remove (${customers.length}): ${customers.map((c) => c.name).join(', ') || 'none'}`);
 
       // 3. Delete children before parents (FK onDelete: Restrict).
