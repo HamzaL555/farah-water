@@ -8,6 +8,7 @@ import { errorHandler, notFoundHandler } from './common/middleware/error';
 import { authRouter } from './auth/auth.routes';
 import { usersRouter } from './users/users.routes';
 import { customersRouter } from './customers/customers.routes';
+import { companiesRouter } from './companies/companies.routes';
 import { deliveriesRouter } from './deliveries/deliveries.routes';
 import { paymentsRouter } from './payments/payments.routes';
 import { debtsRouter } from './debts/debts.routes';
@@ -73,6 +74,7 @@ export function createApp(): Express {
   api.use('/auth', authRouter);
   api.use('/users', usersRouter);
   api.use('/customers', customersRouter);
+  api.use('/companies', companiesRouter);
   api.use('/deliveries', deliveriesRouter);
   api.use('/payments', paymentsRouter);
   api.use('/debts', debtsRouter);

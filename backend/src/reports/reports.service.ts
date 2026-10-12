@@ -3,7 +3,7 @@ import PDFDocument from 'pdfkit';
 import path from 'path';
 import { prisma } from '../prisma';
 import { forbidden } from '../common/utils/errors';
-import { resolveRange, DateRangePreset, formatDDMMYYYY } from '../common/utils/date';
+import { resolveRange, DateRangePreset, formatDDMMYYYY, formatTimeHHMM } from '../common/utils/date';
 import { WAREHOUSE_KEY, workerKey } from '../inventory/inventory.service';
 import { Actor } from '../users/users.service';
 
@@ -57,6 +57,11 @@ const INVENTORY_TYPE_LABEL: Record<string, string> = {
   DAMAGE: 'Zədələnmiş',
   LOSS: 'İtmiş',
   CORRECTION: 'Düzəliş',
+};
+
+const WATER_TYPE_LABEL: Record<string, string> = {
+  FILTERED: 'Filtr suyu',
+  SPRING: 'Bulaq suyu',
 };
 
 const MAX_ROWS = 5000;
@@ -122,14 +127,26 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
       include: {
         customer: { select: { name: true } },
         worker: { select: { fullName: true } },
+        company: { select: { name: true } },
+        office: { select: { name: true } },
       },
     });
 
     sections.push({
       heading: 'Çatdırılmalar',
-      columns: ['Tarix', 'Müştəri', 'Ünvan', 'İşçi', 'Bidon', 'Qiymət', 'Ümumi', 'Ödənilən', 'Borc', 'Status'],
+      columns: [
+        'Tarix', 'Saat', 'Su', 'Hara', 'Müştəri', 'Ünvan / Ofis', 'İşçi',
+        'Bidon', 'Qiymət', 'Ümumi', 'Ödənilən', 'Borc', 'Status',
+      ],
       rows: deliveries.map((d) => [
         formatDDMMYYYY(d.deliveredAt),
+        // The clock time matters when two drops land on the same day and the
+        // owner needs to know which driver reported in first.
+        formatTimeHHMM(d.deliveredAt),
+        WATER_TYPE_LABEL[d.waterType] ?? d.waterType,
+        d.destinationType === 'COMPANY'
+          ? `${d.company?.name ?? ''}${d.office ? ` - ${d.office.name}` : ''}`.trim()
+          : 'Ev',
         d.customer.name,
         d.address,
         d.worker.fullName,
@@ -141,7 +158,7 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
         DELIVERY_STATUS_LABEL[d.status] ?? d.status,
       ]),
       totals: [
-        'CƏMİ', '', '', '',
+        'CƏMİ', '', '', '', '', '', '',
         deliveries.reduce((s, d) => s + d.bottleCount, 0),
         '',
         D(deliveries.reduce((s, d) => s.plus(d.totalAmount), new Prisma.Decimal(0))),
@@ -263,9 +280,10 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
 
     sections.push({
       heading: 'İnventar tarixçəsi',
-      columns: ['Tarix', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],
+      columns: ['Tarix', 'Saat', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],
       rows: movements.map((m) => [
         formatDDMMYYYY(m.occurredAt),
+        formatTimeHHMM(m.occurredAt),
         INVENTORY_TYPE_LABEL[m.type] ?? m.type,
         `${m.direction > 0 ? '+' : '-'}${m.bottleCount}`,
         m.worker?.fullName ?? '',

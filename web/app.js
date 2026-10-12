@@ -106,6 +106,8 @@
   };
 
   var METHOD = { CASH: 'Nağd', CARD: 'Kart', TRANSFER: 'Köçürmə', OTHER: 'Digər' };
+  var WATER = { FILTERED: 'Filtr', SPRING: 'Bulaq' };
+  var WATER_FULL = { FILTERED: 'Filtr suyu', SPRING: 'Bulaq suyu' };
 
   var TX_LABEL = {
     INBOUND: 'Anbara qəbul',
@@ -1018,6 +1020,8 @@
     var rows = data.items.map(function (d) {
       return [
         date(d.deliveredAt),
+        esc(WATER[d.waterType] || d.waterType || '—'),
+        esc(d.destinationType === 'COMPANY' ? (d.officeName || d.companyName || 'Şirkət') : 'Ev'),
         esc(d.customerName || '—'),
         esc(d.workerName || '—'),
         String(d.bottleCount || 0),
@@ -1031,7 +1035,7 @@
 
     view.innerHTML =
       '<div class="toolbar">' +
-        '<input id="del-s" class="grow" placeholder="Müştəri və ya ünvan" value="' + esc(s) + '" />' +
+        '<input id="del-s" class="grow" placeholder="Müştəri, ünvan və ya ofis" value="' + esc(s) + '" />' +
         '<select id="del-status"><option value="">Bütün statuslar</option>' +
           '<option value="UNPAID"' + (st === 'UNPAID' ? ' selected' : '') + '>Borc</option>' +
           '<option value="PARTIAL"' + (st === 'PARTIAL' ? ' selected' : '') + '>Qismən ödənilib</option>' +
@@ -1045,7 +1049,7 @@
       '</div>' +
       panel('Çatdırılmalar (cəmi ' + data.total + ')', '',
         table([
-          { label: 'Tarix' }, { label: 'Müştəri' }, { label: 'İşçi' },
+          { label: 'Tarix' }, { label: 'Su' }, { label: 'Hara' }, { label: 'Müştəri' }, { label: 'İşçi' },
           { label: 'Bidon', num: true }, { label: 'Ümumi', num: true },
           { label: 'Ödənilən', num: true }, { label: 'Borc', num: true },
           { label: 'Status' }, { label: '', cls: 'actions' },
@@ -1072,28 +1076,45 @@
         p.voidedAt ? '' : '<button class="btn btn-outline btn-sm" data-void="' + p.id + '">Ləğv et</button>'];
     });
 
+    var isAdmin = state.user && state.user.role === 'ADMIN';
+    var destination = d.destinationType === 'COMPANY'
+      ? esc((d.companyName || 'Şirkət') + (d.officeName ? ' — ' + d.officeName : ''))
+      : 'Ev';
+    // A delivery with no price yet is the normal state for a home drop: the
+    // driver does not set prices, so the row stays at 0 until the admin fills
+    // it in. Saying so plainly beats showing a confident "0.00 AZN".
+    var priceMissing = Number(d.unitPrice) === 0;
+
     openModal('Çatdırılma · ' + date(d.deliveredAt),
       '<dl class="kv">' +
         '<dt>Müştəri</dt><dd>' + esc(d.customerName || '—') + '</dd>' +
         '<dt>İşçi</dt><dd>' + esc(d.workerName || '—') + '</dd>' +
+        '<dt>Su</dt><dd>' + esc(WATER_FULL[d.waterType] || d.waterType) + '</dd>' +
+        '<dt>Hara</dt><dd>' + destination + '</dd>' +
         '<dt>Ünvan</dt><dd>' + esc(d.address) + '</dd>' +
         '<dt>Bidon sayı</dt><dd>' + d.bottleCount + '</dd>' +
-        '<dt>Bir bidon</dt><dd>' + money(d.unitPrice) + ' AZN</dd>' +
+        '<dt>Bir bidon</dt><dd>' + (priceMissing ? '<span class="badge badge-warn">qiymət yazılmayıb</span>' : money(d.unitPrice) + ' AZN') + '</dd>' +
         '<dt>Ümumi</dt><dd>' + money(d.totalAmount) + ' AZN</dd>' +
         '<dt>Ödənilən</dt><dd>' + money(d.paidAmount) + ' AZN</dd>' +
         '<dt>Qalıq borc</dt><dd>' + money(d.debtAmount) + ' AZN</dd>' +
         '<dt>Status</dt><dd>' + statusBadge(d.status) + '</dd>' +
         (d.note ? '<dt>Qeyd</dt><dd>' + esc(d.note) + '</dd>' : '') +
       '</dl>' +
+      (isAdmin && d.status !== 'CANCELLED'
+        ? '<div class="alert alert-info">Qiyməti və alınan pulu siz yazırsınız. Borc avtomatik hesablanır.</div>'
+        : '') +
       '<div class="mt">' + table([
         { label: 'Tarix' }, { label: 'Məbləğ', num: true }, { label: 'Üsul' }, { label: '' }, { label: '', cls: 'actions' },
       ], rows, 'Ödəniş yoxdur.') + '</div>',
       [
         { label: 'Bağla', kind: 'outline' },
-        ...(d.status === 'CANCELLED' ? [] : [{ label: '+ Ödəniş', kind: 'primary', onClick: function () {
-          closeModal();
-          paymentForm(d);
-        } }]),
+        ...(isAdmin && d.status !== 'CANCELLED'
+          ? [
+              { label: 'Faktura', kind: 'outline', onClick: function () { closeModal(); invoice(d); } },
+              { label: 'Qiymət / ödəniş', kind: 'primary', onClick: function () { closeModal(); deliveryPriceForm(d); } },
+            ]
+          : []),
+        ...(!isAdmin && d.status !== 'CANCELLED' ? [] : []),
       ]);
 
     $$('#modal-body button[data-void]').forEach(function (b) {
@@ -1106,64 +1127,182 @@
     });
   }
 
-  function paymentForm(d) {
-    var remaining = parseFloat(d.debtAmount) || 0;
-    openModal('Ödəniş qeyd et',
-      '<div class="alert alert-info">Qalıq borc: <strong>' + money(remaining) + ' AZN</strong></div>' +
-      moneyField('p-amount', 'Məbləğ', remaining ? String(remaining) : '', 'Boş buraxsanız qalıq borc yazılır') +
-      '<label class="field"><span class="field-label">Üsul</span><select id="p-method">' +
-        Object.keys(METHOD).map(function (k) {
-          return '<option value="' + k + '">' + esc(METHOD[k]) + '</option>';
-        }).join('') + '</select></label>' +
-      textField('p-note', 'Qeyd (istəyə bağlı)', ''),
+  /**
+   * Admin-only: set the bottle price and state how much was collected.
+   *
+   * Both go in one save so the total, the debt and the status are recomputed
+   * together; setting a price and then a payment separately would leave a
+   * window where the row claims a debt that no longer exists.
+   */
+  function deliveryPriceForm(d) {
+    openModal('Qiymət və ödəniş',
+      '<div class="alert alert-info">Qiymət: <strong>' + money(d.unitPrice) + ' AZN</strong>' +
+        ' · Ümumi: <strong>' + money(d.totalAmount) + ' AZN</strong>' +
+        ' · Ödənilən: <strong>' + money(d.paidAmount) + ' AZN</strong></div>' +
+      moneyField('e-price', 'Bir bidonun qiyməti', String(d.unitPrice ?? '0')) +
+      moneyField('e-paid', 'Ödənilən məbləğ', String(d.paidAmount ?? '0'), '0 yazsanız tam ödənməmiş qalır') +
+      textField('e-reason', 'Səbəb', '', {}),
       [
         { label: 'Ləğv et', kind: 'outline' },
-        { label: 'Qeyd et', kind: 'primary', onClick: function () {
-          var v = $('#p-amount').value.trim();
-          return api('POST', '/payments', {
-            deliveryId: d.id,
-            amount: v === '' ? undefined : v,
-            method: $('#p-method').value,
-            note: $('#p-note').value.trim() || undefined,
-            idempotencyKey: idem('pay'),
+        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var reason = $('#e-reason').value.trim();
+          if (reason.length < 3) throw new Error('Düzəliş səbəbi yazılmalıdır (ən azı 3 simvol).');
+          var price = $('#e-price').value.trim();
+          var paid = $('#e-paid').value.trim() || '0';
+          if (parseFloat(paid) < 0) throw new Error('Ödənilən məbləğ negatif ola bilməz.');
+          var total = parseFloat(price) * d.bottleCount;
+          if (parseFloat(paid) > total) {
+            throw new Error('Ödənilən məbləğ ümumi məbləğdən (' + money(total) + ') çox ola bilməz.');
+          }
+          return api('PATCH', '/deliveries/' + d.id, {
+            unitPrice: price,
+            paidAmount: paid,
+            reason: reason,
           }).then(function () {
             closeModal();
-            toast('Ödəniş qeydə alındı.', 'ok');
+            toast('Qiymət və ödəniş yazıldı.', 'ok');
             navigate('deliveries');
           });
         } },
       ]);
   }
 
-  function newDeliveryForm() {
+  /** Printable invoice for one delivery - "faktura kimi çıxır". */
+  function invoice(d) {
+    var lines = [
+      ['Faktura №', String(Date.now()).slice(-8)],
+      ['Tarix', dateTime(d.deliveredAt)],
+      ['Müştəri', d.customerName || '—'],
+      ['Telefon', d.customerPhone || '—'],
+      ['Su', WATER_FULL[d.waterType] || d.waterType || '—'],
+      ['Hara', d.destinationType === 'COMPANY'
+        ? ((d.companyName || 'Şirkət') + (d.officeName ? ' — ' + d.officeName : ''))
+        : 'Ev'],
+      ['Ünvan', d.address || '—'],
+      ['İşçi', d.workerName || '—'],
+      ['Bidon sayı', String(d.bottleCount)],
+      ['Bir bidon', money(d.unitPrice) + ' AZN'],
+      ['ÜMUMİ', money(d.totalAmount) + ' AZN'],
+      ['Ödənilən', money(d.paidAmount) + ' AZN'],
+      ['Qalıq borc', money(d.debtAmount) + ' AZN'],
+      ['Status', d.status === 'PAID' ? 'Ödənilib' : d.status === 'PARTIAL' ? 'Qismən ödənilib' :
+        d.status === 'CANCELLED' ? 'Ləğv edilib' : 'Ödənilməyib'],
+    ];
+
+    openModal('Faktura',
+      '<div class="invoice" id="inv-box">' +
+        '<div class="invoice-head">' +
+          '<img src="/admin/assets/logo.svg" alt="" width="34" height="34" />' +
+          '<div><strong>Farah Su Şirkəti</strong><br /><span class="small muted">Faktura</span></div>' +
+        '</div>' +
+        '<dl class="kv">' + lines.map(function (l) {
+          return '<dt>' + esc(l[0]) + '</dt><dd>' + esc(l[1]) + '</dd>';
+        }).join('') + '</dl>' +
+      '</div>',
+      [
+        { label: 'Bağla', kind: 'outline' },
+        { label: 'Çap et', kind: 'primary', onClick: function () { window.print(); } },
+      ]);
+  }
+
+
+  /**
+ * The new-delivery form.
+ *
+ * A worker records what physically happened - how many bottles, and where -
+ * and nothing else. The price and the money collected are the admin's to
+ * write, because both were previously typed here by the person carrying the
+ * cash, which made the revenue figure unverifiable from the outside.
+ *
+ * The destination picker cascades: pick "Şirkət" and the company and office
+ * selects appear; pick "Ev" and a free-text address appears instead. Only one
+ * of the two is ever in the form, so the two can never disagree.
+ */
+function newDeliveryForm() {
+    var companies = [];
+    var dest = 'HOME';
+
+    function companyOptions() {
+      return companies.map(function (c) {
+        return '<option value="' + c.id + '">' + esc(c.name) + '</option>';
+      }).join('');
+    }
+
+    function officeOptions(companyId) {
+      var c = companies.filter(function (x) { return x.id === companyId; })[0];
+      if (!c || !c.offices.length) return '<option value="">Bu şirkətdə ofis yoxdur</option>';
+      return c.offices.map(function (o) {
+        return '<option value="' + o.id + '">' + esc(o.name) + '</option>';
+      }).join('');
+    }
+
+    /** Which water segment is currently on. */
+    function currentWater() {
+      var on = $('#n-water-seg .is-on');
+      return on ? on.dataset.v : 'FILTERED';
+    }
+
     openModal('Yeni çatdırılma',
+      // Su: which water. Everything downstream - the price, the reports - keys
+      // off this, so it is asked first and never changes afterwards.
+      '<div class="field"><span class="field-label">Su</span>' +
+        '<div class="seg" id="n-water-seg">' +
+          '<button type="button" class="seg-btn is-on" data-v="FILTERED">Filtr suyu</button>' +
+          '<button type="button" class="seg-btn" data-v="SPRING">Bulaq suyu</button>' +
+        '</div></div>' +
+
+      // Hara: where it went.
+      '<div class="field"><span class="field-label">Hara</span>' +
+        '<div class="seg" id="n-dest-seg">' +
+          '<button type="button" class="seg-btn is-on" data-v="HOME">Ev</button>' +
+          '<button type="button" class="seg-btn" data-v="COMPANY">Şirkət</button>' +
+        '</div></div>' +
+
+      '<div id="n-company-wrap" hidden>' +
+        '<label class="field"><span class="field-label">Şirkət</span>' +
+          '<select id="n-company">' + companyOptions() + '</select></label>' +
+        '<label class="field"><span class="field-label">Ofis</span>' +
+          '<select id="n-office">' + officeOptions(companies[0] && companies[0].id) + '</select></label>' +
+      '</div>' +
+
+      '<label class="field" id="n-addr-wrap"><span class="field-label">Ünvan</span>' +
+        '<input id="n-addr" placeholder="Məsələn: Bakı, Xəzər prospekti 12" /></label>' +
+
+      // The customer is looked up the same way for both destinations.
       '<label class="field"><span class="field-label">Müştəri (ad və ya telefon)</span>' +
         '<input id="n-search" placeholder="Axtar…" /></label>' +
       '<div id="n-results" class="small"></div>' +
       '<div id="n-picked" class="alert alert-ok" hidden></div>' +
       '<label class="field" id="n-manual-wrap"><span class="field-label">Və ya yeni müştəri adı</span>' +
         '<input id="n-name" /></label>' +
-      textField('n-addr', 'Ünvan', '', { multiline: true }) +
+
       moneyField('n-count', 'Bidon sayı', '') +
-      moneyField('n-price', 'Bir bidonun qiyməti', '2.00') +
-      moneyField('n-paid', 'Ödənilən məbləğ', '0.00', '0 yazsanız borc qalır') +
-      '<label class="field"><span class="field-label">Ödəniş üsulu</span><select id="n-method">' +
-        Object.keys(METHOD).map(function (k) {
-          return '<option value="' + k + '">' + esc(METHOD[k]) + '</option>';
-        }).join('') + '</select></label>' +
+      '<div class="alert alert-info" id="n-price-note" hidden></div>' +
       textField('n-date', 'Tarix', todayInput(), { type: 'date' }),
       [
         { label: 'Ləğv et', kind: 'outline' },
         { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var count = parseInt($('#n-count').value, 10) || 0;
+          if (!count || count < 1) throw new Error('Bidon sayı ən azı 1 olmalıdır.');
           var picked = $('#n-picked').dataset.id;
+
+          if (dest === 'COMPANY') {
+            if (!$('#n-company').value || !$('#n-office').value) {
+              throw new Error('Şirkət və ofis seçilməlidir.');
+            }
+          } else if ($('#n-addr').value.trim().length < 3) {
+            throw new Error('Evə çatdırılmada ünvan yazılmalıdır.');
+          }
+
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
             customerName: picked ? undefined : $('#n-name').value.trim(),
-            address: $('#n-addr').value.trim(),
-            bottleCount: parseInt($('#n-count').value, 10) || 0,
-            unitPrice: $('#n-price').value.trim(),
-            paidAmount: $('#n-paid').value.trim() || '0',
-            paymentMethod: $('#n-method').value,
+            waterType: currentWater(),
+            destinationType: dest,
+            companyId: dest === 'COMPANY' ? $('#n-company').value : undefined,
+            officeId: dest === 'COMPANY' ? $('#n-office').value : undefined,
+            address: dest === 'HOME' ? $('#n-addr').value.trim() : undefined,
+            bottleCount: count,
             deliveredAt: $('#n-date').value + 'T12:00:00.000Z',
             idempotencyKey: idem('d'),
           }).then(function () {
@@ -1174,7 +1313,42 @@
         } },
       ]);
 
-    var pickedId = '';
+    // Segment buttons carry their value in a hidden input so the submit path
+    // reads one place rather than tracking which button is "on" in a variable.
+    $('#n-water-seg').addEventListener('click', function (e) {
+      var b = e.target.closest('.seg-btn');
+      if (!b) return;
+      $$('#n-water-seg .seg-btn').forEach(function (x) { x.classList.toggle('is-on', x === b); });
+      showPriceNote();
+    });
+    $('#n-dest-seg').addEventListener('click', function (e) {
+      var b = e.target.closest('.seg-btn');
+      if (!b) return;
+      $$('#n-dest-seg .seg-btn').forEach(function (x) { x.classList.toggle('is-on', x === b); });
+      dest = b.dataset.v;
+      $('#n-company-wrap').hidden = dest !== 'COMPANY';
+      $('#n-addr-wrap').hidden = dest !== 'HOME';
+      showPriceNote();
+    });
+
+    function showPriceNote() {
+      var box = $('#n-price-note');
+      if (dest !== 'COMPANY') { box.hidden = true; return; }
+      var c = companies.filter(function (x) { return x.id === $('#n-company').value; })[0];
+      if (!c) { box.hidden = true; return; }
+      var p = currentWater() === 'SPRING' ? c.springPrice : c.filteredPrice;
+      box.hidden = false;
+      box.innerHTML = 'Qiymət avtomatik: <strong>' + money(p) + ' AZN</strong>' +
+        ' / bidon. Hər bidon üçün sayı yazsan, ümumi məbləğ avtomatik hesablanır.';
+    }
+
+    $('#n-company').addEventListener('change', function () {
+      $('#n-office').innerHTML = officeOptions(this.value);
+      showPriceNote();
+    });
+    $('#n-office').addEventListener('change', showPriceNote);
+    showPriceNote();
+
     var timer = null;
     $('#n-search').addEventListener('input', function (e) {
       var v = e.target.value.trim();
@@ -1193,9 +1367,8 @@
             $$('#n-results a').forEach(function (a) {
               a.addEventListener('click', function (ev) {
                 ev.preventDefault();
-                pickedId = a.dataset.cid;
                 $('#n-picked').hidden = false;
-                $('#n-picked').dataset.id = pickedId;
+                $('#n-picked').dataset.id = a.dataset.cid;
                 $('#n-picked').innerHTML = 'Seçilib: <strong>' + esc(a.dataset.cname) + '</strong>';
                 $('#n-manual-wrap').hidden = true;
                 $('#n-results').innerHTML = '';
@@ -1206,6 +1379,25 @@
           .catch(function () {});
       }, 250);
     });
+
+    // The picker needs the company list before the form can offer any choice,
+    // and failing to load it must say so rather than leave empty selects.
+    api('GET', '/companies')
+      .then(function (rows) {
+        companies = rows;
+        if (!companies.length) {
+          $('#n-company').innerHTML = '<option value="">Şirkət yoxdur</option>';
+          $('#n-office').innerHTML = '';
+          return;
+        }
+        $('#n-company').innerHTML = companyOptions();
+        $('#n-office').innerHTML = officeOptions(companies[0].id);
+        showPriceNote();
+      })
+      .catch(function (e) {
+        $('#n-company').innerHTML = '<option value="">Yüklənə bilmədi</option>';
+        toast(e.message, 'err');
+      });
   }
 
   // ------------------------------------------------------------- debts --
@@ -1357,9 +1549,19 @@
       monthOpts.push(d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'));
     }
 
+    // Six years back plus the current one: a yearly report is asked for when
+    // reconciling accounts, which is rarely the current year alone.
+    var thisYear = new Date().getUTCFullYear();
+    var yearOpts = [{ v: '', t: 'Bu il' }];
+    for (var yi = 0; yi < 6; yi++) {
+      var yy = thisYear - yi;
+      yearOpts.push({ v: String(yy), t: yi === 0 ? String(yy) + ' (bu il)' : String(yy) });
+    }
+
     view.innerHTML =
-      // Monthly report gets its own block: it is the report the owner asks for
-      // most often and it should never be hidden behind a date range.
+      // Monthly and yearly get their own blocks for the same reason: these are
+      // the two reports an owner actually asks for, and neither should be
+      // reachable only by typing a date range.
       '<div class="panel"><div class="panel-head"><h3>📅 Aylıq hesabat</h3>' +
         '<div class="spacer"></div>' +
         '<select id="m-month"><option value="">Bu ay</option><option value="last">Keçən ay</option>' +
@@ -1379,6 +1581,23 @@
             '<button class="btn btn-outline" id="m-view">Ekranda gör</button>' +
           '</div>' +
           '<div class="small muted" style="margin-top:8px">Aylıq hesabat yalnız seçilmiş ayın məlumatını əhatə edir.</div>' +
+        '</div></div>' +
+
+      '<div class="panel"><div class="panel-head"><h3>📆 İllik hesabat</h3>' +
+        '<div class="spacer"></div>' +
+        '<select id="y-year">' + yearOpts.map(function (y) {
+          return '<option value="' + y.v + '"' + (y.sel ? ' selected' : '') + '>' + esc(y.t) + '</option>';
+        }).join('') + '</select></div>' +
+        '<div class="panel-body">' +
+          '<div class="toolbar" style="margin-bottom:0">' +
+            '<button class="btn btn-primary" data-yf="xls" data-ml="Excel 97 (.xls)">📗 Excel (.xls)</button>' +
+            '<button class="btn btn-secondary" data-yf="xlsx" data-ml="Excel (.xlsx)">📊 Excel (.xlsx)</button>' +
+            '<button class="btn btn-outline" data-yf="csv" data-ml="CSV">📄 CSV</button>' +
+            '<button class="btn btn-outline" data-yf="pdf" data-ml="PDF">📕 PDF</button>' +
+            '<div style="flex:1"></div>' +
+            '<button class="btn btn-outline" id="y-view">Ekranda gör</button>' +
+          '</div>' +
+          '<div class="small muted" style="margin-top:8px">İllik hesabat yalnız seçilmiş ilin məlumatını əhatə edir.</div>' +
         '</div></div>' +
 
       '<div class="toolbar"><select id="r-type">' +
@@ -1406,6 +1625,11 @@
     var monthlyPath = function (format) {
       var m = $('#m-month').value;
       return '/reports/monthly?format=' + format + (m ? '&month=' + encodeURIComponent(m) : '');
+    };
+
+    var yearlyPath = function (format) {
+      var y = $('#y-year').value;
+      return '/reports/yearly?format=' + format + (y ? '&year=' + encodeURIComponent(y) : '');
     };
 
     var showReport = function (rep) {
@@ -1453,6 +1677,22 @@
       b.addEventListener('click', function () {
         var ext = b.dataset.mf === 'xls' ? '.xls' : '.' + b.dataset.mf;
         downloadReport(monthlyPath(b.dataset.mf), 'ayliq-hesabat' + ext, ext);
+      });
+    });
+
+    $('#y-view').addEventListener('click', function () {
+      var out = $('#r-out');
+      out.innerHTML = '<div class="loader">Yüklənir…</div>';
+      var y = $('#y-year').value;
+      api('GET', '/reports/yearly' + (y ? '?year=' + encodeURIComponent(y) : ''))
+        .then(function (rep) { out.innerHTML = showReport(rep); })
+        .catch(function (e) { out.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>'; });
+    });
+
+    $$('#view button[data-yf]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var ext = b.dataset.yf === 'xls' ? '.xls' : '.' + b.dataset.yf;
+        downloadReport(yearlyPath(b.dataset.yf), 'illik-hesabat' + ext, ext);
       });
     });
   }

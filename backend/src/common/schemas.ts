@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { DeliveryStatus, InventoryTxType, PaymentMethod, DebtAdjustmentType } from '@prisma/client';
+import {
+  DeliveryStatus,
+  InventoryTxType,
+  PaymentMethod,
+  DebtAdjustmentType,
+  WaterType,
+  DestinationType,
+} from '@prisma/client';
 import { strongPassword } from '../auth/auth.schemas';
 
 // Numeric inputs arrive as strings from query params, so coerce then bound them.
@@ -23,15 +30,19 @@ export const createDeliverySchema = z
     customerId: z.string().uuid().optional(),
     customerName: z.string().trim().max(150).optional(),
     customerPhone: z.string().trim().max(30).optional(),
-    address: z.string().trim().min(3, 'Ünvan ən azı 3 simvol olmalıdır.').max(400),
+    address: z.string().trim().max(400).optional(),
     contactPhone: z.string().trim().max(30).optional(),
+
+    // Su: which water. Hara: where it went. These two replace the old flat
+    // "address + price" form, where a driver typed both and the two could not
+    // be checked against each other.
+    waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
+    destinationType: z.nativeEnum(DestinationType).default(DestinationType.HOME),
+    companyId: z.string().uuid().optional(),
+    officeId: z.string().uuid().optional(),
+
     bottleCount: z.coerce.number().int().min(1, 'Bidon sayı ən azı 1 olmalıdır.').max(10000),
-    unitPrice: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]),
-    paidAmount: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]).optional(),
-    paymentMethod: z.nativeEnum(PaymentMethod).optional(),
     workerId: z.string().uuid().optional(),
-    // Accepts a full ISO instant or a plain YYYY-MM-DD local date, because the
-    // mobile date picker sends the latter.
     deliveredAt: z
       .string()
       .refine((v) => !Number.isNaN(Date.parse(v)), 'Çatdırılma tarixi düzgün deyil.')
@@ -41,12 +52,35 @@ export const createDeliverySchema = z
   .refine((d) => d.customerId || (d.customerName && d.customerName.length >= 2), {
     message: 'Müştəri seçilməlidir və ya müştərinin adı yazılmalıdır.',
     path: ['customerName'],
-  });
+  })
+  .refine(
+    (d) => d.destinationType !== DestinationType.COMPANY || (d.companyId && d.officeId),
+    {
+      message: 'Şirkətə çatdırılmada şirkət və ofis seçilməlidir.',
+      path: ['officeId'],
+    },
+  )
+  .refine(
+    (d) => d.destinationType !== DestinationType.HOME || (d.address && d.address.length >= 3),
+    {
+      message: 'Evə çatdırılmada ünvan ən azı 3 simvol olmalıdır.',
+      path: ['address'],
+    },
+  );
+// NOTE: `unitPrice` and `paidAmount` are deliberately absent. A worker records
+// what they delivered; the admin sets the price and the money collected. The
+// service derives the price server-side, so a client that sends one anyway is
+// rejected by zod's default "unknown keys are stripped" behaviour instead of
+// being quietly trusted.
 
 export const listDeliveriesSchema = z.object({
   workerId: z.string().uuid().optional(),
   customerId: z.string().uuid().optional(),
   status: z.nativeEnum(DeliveryStatus).optional(),
+  waterType: z.nativeEnum(WaterType).optional(),
+  destinationType: z.nativeEnum(DestinationType).optional(),
+  companyId: z.string().uuid().optional(),
+  officeId: z.string().uuid().optional(),
   search: z.string().trim().max(120).optional(),
   preset: rangePreset,
   from: dateFromQuery,
@@ -63,6 +97,13 @@ export const updateDeliverySchema = z.object({
   note: z.string().trim().max(1000).optional(),
   bottleCount: z.coerce.number().int().min(1).max(10000).optional(),
   unitPrice: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]).optional(),
+  /**
+   * The money actually collected, stated directly by the admin. Optional: leave
+   * it out and only the price is corrected. This is deliberately NOT a status
+   * field - "ödenilib" is always recomputed from the payment ledger, so it can
+   * never drift from the money that genuinely arrived.
+   */
+  paidAmount: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]).optional(),
   reason: z.string().trim().min(3, 'Düzəliş səbəbi yazılmalıdır.').max(500),
 });
 
@@ -266,6 +307,8 @@ export const reportSchema = z.object({
   format: z.enum(['json', 'csv', 'pdf', 'xlsx', 'xls']).default('json'),
   /** Only used by /reports/monthly: "YYYY-MM", or "last", or omitted for now. */
   month: z.string().regex(/^(\d{4}-\d{2}|last)$/).optional(),
+  /** Only used by /reports/yearly: "YYYY", or "last", or omitted for now. */
+  year: z.string().regex(/^(\d{4}|last)$/).optional(),
 });
 
 // -------------------------------- settings --------------------------------

@@ -45,6 +45,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# throwaway copy of the panel pointed at a local API (see web/make-dev-copy.js)
+.devpanel/
+
 # android build artefacts
 mobile/android/.gradle/
 mobile/android/app/build/
@@ -60,3 +63,6 @@ tools/cloudflared.exe
 
 # transient local tunnel state - machine-specific, never source-controlled
 tools/public-url.txt
+
+# downloaded report files produced by verify-report-files.js
+.tmp-reports/

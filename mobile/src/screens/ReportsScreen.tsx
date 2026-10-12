@@ -51,6 +51,17 @@ const monthOptions = (count: number): Array<{ value: string; label: string }> =>
   return out;
 };
 
+/** Years offered by the yearly report picker, most recent first. */
+const yearOptions = (count: number): Array<{ value: string; label: string }> => {
+  const now = new Date();
+  const out = [{ value: '', label: 'Bu il' }];
+  for (let i = 0; i < count; i++) {
+    const y = now.getFullYear() - i;
+    out.push({ value: String(y), label: i === 0 ? `${y} (bu il)` : String(y) });
+  }
+  return out;
+};
+
 /**
  * Report viewer with CSV / Excel / PDF export.
  *
@@ -61,9 +72,11 @@ export const ReportsScreen: React.FC = () => {
   const [type, setType] = useState<ReportType>('daily');
   const [preset, setPreset] = useState<DateRangePreset>('today');
   const [month, setMonth] = useState('');
+  const [year, setYear] = useState('');
   const [snack, setSnack] = useState<string | null>(null);
 
   const MONTHS = useMemo(() => monthOptions(18), []);
+  const YEARS = useMemo(() => yearOptions(6), []);
 
   const { data, loading, error, run } = useAsync(
     () => reportsApi.json({ type, preset }).then((r) => r.data),
@@ -75,6 +88,11 @@ export const ReportsScreen: React.FC = () => {
     [month],
   );
 
+  const { data: yearly, loading: yearlyLoading, run: runYearly } = useAsync(
+    () => reportsApi.yearly({ year: year || undefined }).then((r) => r.data),
+    [year],
+  );
+
   useFocusEffect(
     useCallback(() => {
       void run(false);
@@ -82,11 +100,19 @@ export const ReportsScreen: React.FC = () => {
   );
 
   const exportAction = useSubmit(
-    async (args: { format: ExportFormat; monthly?: boolean; month?: string }) => {
+    async (args: {
+      format: ExportFormat;
+      monthly?: boolean;
+      month?: string;
+      yearly?: boolean;
+      year?: string;
+    }) => {
       const result = await reportsApi.raw({
-        ...(args.monthly
-          ? { monthly: true, month: args.month, type, preset }
-          : { type, preset }),
+        ...(args.yearly
+          ? { yearly: true, year: args.year }
+          : args.monthly
+            ? { monthly: true, month: args.month }
+            : { type, preset }),
         format: args.format,
       });
       // Sharing the text/base64 payload lets the user send the export to another
@@ -99,7 +125,13 @@ export const ReportsScreen: React.FC = () => {
     },
   );
 
-  const onExport = async (args: { format: ExportFormat; monthly?: boolean; month?: string }) => {
+  const onExport = async (args: {
+    format: ExportFormat;
+    monthly?: boolean;
+    month?: string;
+    yearly?: boolean;
+    year?: string;
+  }) => {
     try {
       const result = await exportAction.submit(args);
       if (result) setSnack(`${result} yaradıldı və paylaşma pəncərəsi açıldı.`);
@@ -246,6 +278,81 @@ export const ReportsScreen: React.FC = () => {
                 {monthly.title} · {monthly.subtitle} · {monthly.sections.length} bölmə
               </Text>
               {monthly.sections.map((section) => (
+                <View key={section.heading} style={styles.monthSection}>
+                  <Text style={styles.monthHeading}>{section.heading}</Text>
+                  <Text style={styles.meta}>{section.rows.length} sətir</Text>
+                </View>
+              ))}
+            </>
+          ) : null}
+        </SectionCard>
+
+        {/* Annual report, same shape as the monthly one. */}
+        <SectionCard title="İllik hesabat" subtitle="Seçilmiş ilin tam hesabatı">
+          <View style={styles.chipRow}>
+            {YEARS.map((y) => (
+              <Chip
+                key={y.value || 'this'}
+                compact
+                selected={year === y.value}
+                onPress={() => {
+                  setYear(y.value);
+                  setTimeout(() => void runYearly(false), 50);
+                }}
+                style={styles.chip}
+              >
+                {y.label}
+              </Chip>
+            ))}
+          </View>
+
+          <View style={styles.monthActions}>
+            <Button
+              mode="contained"
+              icon="file-excel"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'xls', yearly: true, year })}
+              style={styles.exportBtn}
+            >
+              .xls
+            </Button>
+            <Button
+              mode="contained"
+              icon="file-delimited"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'xlsx', yearly: true, year })}
+              style={styles.exportBtn}
+            >
+              .xlsx
+            </Button>
+            <Button
+              mode="contained-tonal"
+              icon="file-delimited-outline"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'csv', yearly: true, year })}
+              style={styles.exportBtn}
+            >
+              CSV
+            </Button>
+            <Button
+              mode="contained-tonal"
+              icon="file-pdf-box"
+              loading={exportAction.submitting}
+              onPress={() => void onExport({ format: 'pdf', yearly: true, year })}
+              style={styles.exportBtn}
+            >
+              PDF
+            </Button>
+          </View>
+
+          {yearlyLoading ? <ActivityIndicator style={styles.spinner} /> : null}
+
+          {yearly && !yearlyLoading ? (
+            <>
+              <Text style={styles.meta}>
+                {yearly.title} · {yearly.subtitle} · {yearly.sections.length} bölmə
+              </Text>
+              {yearly.sections.map((section) => (
                 <View key={section.heading} style={styles.monthSection}>
                   <Text style={styles.monthHeading}>{section.heading}</Text>
                   <Text style={styles.meta}>{section.rows.length} sətir</Text>

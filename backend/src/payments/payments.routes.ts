@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import { Role } from '@prisma/client';
 import { asyncHandler } from '../common/middleware/error';
-import { requireAuth } from '../common/middleware/auth';
+import { requireAuth, requireRole } from '../common/middleware/auth';
 import { validate } from '../common/middleware/validate';
 import { actorOf, param } from '../common/utils/actor';
 import { uuidParam, createPaymentSchema, listPaymentsSchema, voidPaymentSchema } from '../common/schemas';
@@ -19,6 +20,7 @@ paymentsRouter.get(
 
 paymentsRouter.post(
   '/',
+  requireRole(Role.ADMIN),
   validate(createPaymentSchema),
   asyncHandler(async (req, res) => {
     const result = await createPayment(req.body, actorOf(req), req as never);
@@ -39,6 +41,7 @@ paymentsRouter.get(
 
 paymentsRouter.post(
   '/:id/void',
+  requireRole(Role.ADMIN),
   validate(uuidParam, 'params'),
   validate(voidPaymentSchema),
   asyncHandler(async (req, res) => {

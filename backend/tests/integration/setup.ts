@@ -127,20 +127,50 @@ export async function makeCustomer(workerToken: string, name = 'Test Customer', 
   return res.body.data.customer as { id: string; name: string; address: string };
 }
 
+/**
+ * The spec's worked example: 10 bottles at 2.00. Applied by the admin after
+ * creation, because a worker no longer sends a price.
+ */
+const DEFAULT_PRICE = '2.00';
+
 export interface DeliveryPayload {
   customerId?: string;
   customerName?: string;
   address?: string;
   bottleCount?: number;
+  /**
+   * No longer sent by the client - the worker does not set prices. The helper
+   * still accepts it so a test can state the price it wants, and applies it
+   * afterwards as the admin would.
+   */
   unitPrice?: string;
+  /** Same: applied by the admin afterwards, not sent at creation. */
   paidAmount?: string;
   note?: string;
   idempotencyKey?: string;
   deliveredAt?: string;
+  waterType?: 'FILTERED' | 'SPRING';
+  destinationType?: 'HOME' | 'COMPANY';
+  companyId?: string;
+  officeId?: string;
 }
 
-export const makeDelivery = (workerToken: string, payload: DeliveryPayload = {}) =>
-  api
+/**
+ * Creates a delivery as the worker, then applies the price (and any paid
+ * amount) the test asked for using the admin token.
+ *
+ * A delivery is born at 0.00 now, because the worker does not set prices. Every
+ * arithmetic test therefore needs the admin step; doing it here keeps the tests
+ * describing business outcomes instead of API choreography, and keeps the
+ * 10 x 2.00 = 20.00 worked example from the spec as the default.
+ *
+ * The returned object keeps the POST's status code, so callers can still assert
+ * "created" (201), while `body.data` is the settled delivery.
+ */
+export const makeDelivery = async (workerToken: string, payload: DeliveryPayload = {}) => {
+  const { unitPrice = DEFAULT_PRICE, paidAmount, ...body } = payload;
+
+  const res = await api
     .post('/api/v1/deliveries')
     .set(auth(workerToken))
     .send({
@@ -148,14 +178,39 @@ export const makeDelivery = (workerToken: string, payload: DeliveryPayload = {})
       customerName: 'Test Customer',
       address: 'Test Street 1',
       bottleCount: 10,
-      unitPrice: '2.00',
-      ...payload,
+      ...body,
     });
 
-export const makePayment = (workerToken: string, deliveryId: string, amount: string, extra: Record<string, unknown> = {}) =>
+  // A rejection, or a duplicate replay: hand it back untouched so the caller
+  // still sees the real status and the `meta.duplicate` flag.
+  if (res.statusCode !== 201) return res;
+
+  const deliveryId = res.body.data.id as string;
+  const patch = await api
+    .patch(`/api/v1/deliveries/${deliveryId}`)
+    .set(auth(fx.admin!.token))
+    .send({ unitPrice, paidAmount: paidAmount ?? '0', reason: 'test setup' });
+
+  // The settling step is part of what the caller asked for. If it is rejected -
+  // say, a paid amount larger than the total - report that failure rather than
+  // returning a delivery that quietly has a different shape than requested.
+  if (patch.statusCode >= 400) return patch;
+
+  const settled = (await api.get(`/api/v1/deliveries/${deliveryId}`).set(auth(workerToken))).body.data;
+  return { ...res, body: { ...res.body, data: settled } };
+};
+
+/**
+ * Records a payment as the ADMIN.
+ *
+ * Payments are admin-only by design, so the worker token argument is kept only
+ * to name the delivery's owner in a failure message. Tests that assert the
+ * restriction itself call the endpoint directly.
+ */
+export const makePayment = (_workerToken: string, deliveryId: string, amount: string, extra: Record<string, unknown> = {}) =>
   api
     .post('/api/v1/payments')
-    .set(auth(workerToken))
+    .set(auth(fx.admin!.token))
     .send({ idempotencyKey: key(), deliveryId, amount, ...extra });
 
 export const getDelivery = (token: string, id: string) =>

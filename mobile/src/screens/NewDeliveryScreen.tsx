@@ -12,20 +12,14 @@ import {
   SegmentedButtons,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { customersApi, deliveriesApi } from '../services/endpoints';
+import { companiesApi, customersApi, deliveriesApi } from '../services/endpoints';
 import { enqueue } from '../services/offlineQueue';
 import { useAuth } from '../context/AuthContext';
 import { useAsync, useSubmit } from '../hooks/useAsync';
-import {
-  formatMoney,
-  normalizeMoneyInput,
-  parseMoneyInput,
-  todayInputValue,
-  METHOD_LABEL,
-} from '../utils/format';
+import { formatMoney, todayInputValue } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
 import { ApiError } from '../services/types';
-import type { PaymentMethod } from '../types';
+import type { DestinationType, WaterType } from '../types';
 import type { WorkerStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<WorkerStackParamList>;
@@ -33,13 +27,24 @@ type Nav = NativeStackNavigationProp<WorkerStackParamList>;
 /**
  * New delivery form.
  *
- * Money fields pre-compute for the worker's convenience, but the displayed
- * totals are labelled as a preview: the server recomputes everything and its
- * answer is what gets stored.
+ * The worker records three things: which water, where it went, and how many
+ * bottles. Nothing about money. The price is the company's or the admin's to
+ * set and the cash collected is the admin's to declare, so the amount on the
+ * delivery is decided by the owner rather than by whoever was carrying it.
+ *
+ * The destination picker cascades. "Şirkət" reveals a company and then an
+ * office; "Ev" reveals a free-text address. Exactly one of the two is ever on
+ * screen, so a company delivery cannot end up with a typed address that
+ * contradicts its office.
  */
 export const NewDeliveryScreen: React.FC = () => {
   const navigation = useNavigation<Nav>();
   const { user, isConnected } = useAuth();
+
+  const [waterType, setWaterType] = useState<WaterType>('FILTERED');
+  const [destinationType, setDestinationType] = useState<DestinationType>('HOME');
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [officeId, setOfficeId] = useState<string | null>(null);
 
   const [customerQuery, setCustomerQuery] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -48,38 +53,39 @@ export const NewDeliveryScreen: React.FC = () => {
   const [address, setAddress] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [bottleCount, setBottleCount] = useState('');
-  const [unitPrice, setUnitPrice] = useState('2.00');
-  const [paidAmount, setPaidAmount] = useState('0');
-  const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [deliveredAt, setDeliveredAt] = useState(todayInputValue());
   const [note, setNote] = useState('');
   const [touched, setTouched] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
   const [queuedOffline, setQueuedOffline] = useState(false);
 
+  const { data: companies } = useAsync(() => companiesApi.list().then((r) => r.data), []);
   const { data: customers } = useAsync(
     () => customersApi.list({ search: customerQuery, pageSize: 8 }).then((r) => r.data.items),
     [customerQuery],
   );
 
-  // ---- local preview only; the server is authoritative --------------------
-  const count = parseInt(bottleCount || '0', 10);
-  const price = parseMoneyInput(unitPrice);
-  const total = Math.round(count * price * 100) / 100;
-  const paid = parseMoneyInput(paidAmount);
-  const debt = Math.round((total - paid) * 100) / 100;
+  // The office list depends on the company, so it is derived rather than stored
+  // - two sources of truth for "which office" would drift.
+  const company = useMemo(
+    () => (companies ?? []).find((c) => c.id === companyId) ?? null,
+    [companies, companyId],
+  );
+  const offices = company?.offices ?? [];
+  const unitPrice = useMemo(() => {
+    if (destinationType !== 'COMPANY' || !company) return 0;
+    return waterType === 'SPRING' ? company.springPrice : company.filteredPrice;
+  }, [destinationType, company, waterType]);
 
-  const previewStatus = useMemo(() => {
-    if (paid <= 0) return 'UNPAID';
-    if (paid >= total) return 'PAID';
-    return 'PARTIAL';
-  }, [paid, total]);
+  const count = parseInt(bottleCount || '0', 10);
+  const total = Math.round(count * unitPrice * 100) / 100;
 
   const countError = touched && (!Number.isInteger(count) || count <= 0) ? 'Bidon sayı ən azı 1 olmalıdır.' : null;
-  const priceError = touched && price <= 0 ? 'Qiymət sıfırdan böyük olmalıdır.' : null;
-  const paidError = touched && (paid < 0 || paid > total) ? `0 - ${total.toFixed(2)} arasında olmalıdır.` : null;
   const nameError = touched && !selectedCustomerId && customerName.trim().length < 2 ? 'Müştərinin adını yazın.' : null;
-  const addressError = touched && address.trim().length < 3 ? 'Çatdırılma ünvanı tələb olunur.' : null;
+  const addressError =
+    touched && destinationType === 'HOME' && address.trim().length < 3 ? 'Evə çatdırılmada ünvan yazılmalıdır.' : null;
+  const companyError = touched && destinationType === 'COMPANY' && !company ? 'Şirkət seçilməlidir.' : null;
+  const officeError = touched && destinationType === 'COMPANY' && !officeId ? 'Ofis seçilməlidir.' : null;
 
   const payload = () => ({
     // One UUID per submission attempt: makes replay after reconnect safe.
@@ -87,12 +93,13 @@ export const NewDeliveryScreen: React.FC = () => {
     customerId: selectedCustomerId ?? undefined,
     customerName: selectedCustomerId ? undefined : customerName.trim(),
     customerPhone: customerPhone.trim() || undefined,
-    address: address.trim(),
+    waterType,
+    destinationType,
+    companyId: destinationType === 'COMPANY' ? companyId ?? undefined : undefined,
+    officeId: destinationType === 'COMPANY' ? officeId ?? undefined : undefined,
+    address: destinationType === 'HOME' ? address.trim() : undefined,
     contactPhone: contactPhone.trim() || undefined,
     bottleCount: count,
-    unitPrice: normalizeMoneyInput(unitPrice),
-    paidAmount: normalizeMoneyInput(paidAmount || '0'),
-    paymentMethod: method,
     deliveredAt,
     note: note.trim() || undefined,
   });
@@ -121,9 +128,10 @@ export const NewDeliveryScreen: React.FC = () => {
 
   const onSave = async () => {
     setTouched(true);
-    if (!Number.isInteger(count) || count <= 0 || price <= 0 || address.trim().length < 3) return;
+    if (!Number.isInteger(count) || count <= 0) return;
     if (!selectedCustomerId && customerName.trim().length < 2) return;
-    if (paid < 0 || paid > total) return;
+    if (destinationType === 'HOME' && address.trim().length < 3) return;
+    if (destinationType === 'COMPANY' && (!company || !officeId)) return;
 
     const result = await submit();
     if (!result) return;
@@ -149,6 +157,111 @@ export const NewDeliveryScreen: React.FC = () => {
             </View>
           ) : null}
 
+          <Text style={styles.sectionTitle}>Su</Text>
+          <SegmentedButtons
+            value={waterType}
+            onValueChange={(v) => setWaterType(v as WaterType)}
+            buttons={[
+              { value: 'FILTERED', label: 'Filtr suyu' },
+              { value: 'SPRING', label: 'Bulaq suyu' },
+            ]}
+            style={styles.input}
+          />
+
+          <Text style={[styles.sectionTitle, styles.spaced]}>Hara</Text>
+          <SegmentedButtons
+            value={destinationType}
+            onValueChange={(v) => {
+              const next = v as DestinationType;
+              setDestinationType(next);
+              // Clear the other branch's selection: leaving a stale office id
+              // behind would attach this delivery to an office the driver no
+              // longer picked.
+              if (next === 'COMPANY') {
+                setAddress('');
+              } else {
+                setOfficeId(null);
+                setCompanyId(null);
+              }
+            }}
+            buttons={[
+              { value: 'HOME', label: 'Ev' },
+              { value: 'COMPANY', label: 'Şirkət' },
+            ]}
+            style={styles.input}
+          />
+
+          {destinationType === 'COMPANY' ? (
+            <>
+              <Text style={[styles.sectionTitle, styles.spaced]}>Şirkət</Text>
+              {companies && companies.length > 0 ? (
+                <View style={styles.chipRow}>
+                  {companies.map((c) => (
+                    <Chip
+                      key={c.id}
+                      selected={companyId === c.id}
+                      onPress={() => {
+                        setCompanyId(c.id);
+                        setOfficeId(null);
+                      }}
+                      style={styles.chip}
+                    >
+                      {c.name}
+                    </Chip>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.hint}>Şirkət yüklənir…</Text>
+              )}
+              {companyError ? <HelperText type="error">{companyError}</HelperText> : null}
+
+              {company ? (
+                <>
+                  <Text style={[styles.sectionTitle, styles.spaced]}>Ofis</Text>
+                  <View style={styles.chipRow}>
+                    {offices.map((o) => (
+                      <Chip
+                        key={o.id}
+                        selected={officeId === o.id}
+                        onPress={() => setOfficeId(o.id)}
+                        style={styles.chip}
+                      >
+                        {o.name}
+                      </Chip>
+                    ))}
+                  </View>
+                  {officeError ? <HelperText type="error">{officeError}</HelperText> : null}
+                  <View style={styles.priceNote}>
+                    <Text style={styles.priceNoteText}>
+                      Qiymət avtomatik: <Text style={styles.priceNoteStrong}>{formatMoney(unitPrice)} AZN</Text> / bidon.
+                      {'\n'}Admin qiyməti və ödənilən pulu sonra yazacaq.
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={[styles.sectionTitle, styles.spaced]}>Ünvan</Text>
+              <PaperInput
+                label="Ev ünvanı"
+                value={address}
+                onChangeText={setAddress}
+                mode="outlined"
+                multiline
+                error={Boolean(addressError)}
+                style={styles.input}
+              />
+              {addressError ? <HelperText type="error">{addressError}</HelperText> : null}
+              <View style={styles.priceNote}>
+                <Text style={styles.priceNoteText}>
+                  Qiyməti siz yazmırsınız. Admin qiyməti və alınan pulu sonra daxil edəcək.
+                </Text>
+              </View>
+            </>
+          )}
+
+          <Divider style={styles.divider} />
           <Text style={styles.sectionTitle}>Müştəri</Text>
           <PaperInput
             label="Müştəri axtar"
@@ -169,7 +282,9 @@ export const NewDeliveryScreen: React.FC = () => {
                   onPress={() => {
                     setSelectedCustomerId(c.id);
                     setCustomerName(c.name);
-                    setAddress(c.address);
+                    // A stored address only pre-fills the field when this is a
+                    // home drop; for a company the office is the address.
+                    if (destinationType === 'HOME') setAddress(c.address);
                     if (c.phone) setContactPhone(c.phone);
                   }}
                   style={styles.chip}
@@ -211,54 +326,33 @@ export const NewDeliveryScreen: React.FC = () => {
                 mode="outlined"
                 keyboardType="phone-pad"
                 style={styles.input}
-              />            </>
+              />
+            </>
           )}
 
           <Divider style={styles.divider} />
           <Text style={styles.sectionTitle}>Çatdırılma</Text>
 
           <PaperInput
-            label="Çatdırılma ünvanı"
-            value={address}
-            onChangeText={setAddress}
+            label="Bidon sayı"
+            value={bottleCount}
+            onChangeText={(t) => setBottleCount(t.replace(/[^\d]/g, ''))}
             mode="outlined"
-            multiline
-            error={Boolean(addressError)}
+            keyboardType="number-pad"
+            error={Boolean(countError)}
             style={styles.input}
           />
-          {addressError ? <HelperText type="error">{addressError}</HelperText> : null}
-
-          <PaperInput
-            label="Əlaqə nömrəsi"
-            value={contactPhone}
-            onChangeText={setContactPhone}
-            mode="outlined"
-            keyboardType="phone-pad"
-            style={styles.input}
-          />
-
-          <View style={styles.row}>
-            <PaperInput
-              label="Bidon sayı"
-              value={bottleCount}
-              onChangeText={(t) => setBottleCount(t.replace(/[^\d]/g, ''))}
-              mode="outlined"
-              keyboardType="number-pad"
-              error={Boolean(countError)}
-              style={styles.half}
-            />
-            <PaperInput
-              label="Bir bidonun qiyməti"
-              value={unitPrice}
-              onChangeText={(t) => setUnitPrice(normalizeMoneyInput(t))}
-              mode="outlined"
-              keyboardType="decimal-pad"
-              error={Boolean(priceError)}
-              style={styles.half}
-            />
-          </View>
           {countError ? <HelperText type="error">{countError}</HelperText> : null}
-          {priceError ? <HelperText type="error">{priceError}</HelperText> : null}
+
+          {destinationType === 'COMPANY' && company ? (
+            <View style={styles.priceNote}>
+              <View style={styles.previewRow}>
+                <Text style={styles.previewLabel}>{count} bidon × {formatMoney(unitPrice)}</Text>
+                <Text style={styles.previewValue}>{formatMoney(total)}</Text>
+              </View>
+              <Text style={styles.previewNote}>Qiymət şirkətin müqaviləsi ilə təyin olunur.</Text>
+            </View>
+          ) : null}
 
           <PaperInput
             label="Çatdırılma tarixi"
@@ -277,54 +371,6 @@ export const NewDeliveryScreen: React.FC = () => {
             numberOfLines={2}
             style={styles.input}
           />
-
-          <Divider style={styles.divider} />
-          <Text style={styles.sectionTitle}>Ödəniş</Text>
-
-          <PaperInput
-            label="Ödənilən məbləğ"
-            value={paidAmount}
-            onChangeText={(t) => setPaidAmount(normalizeMoneyInput(t))}
-            mode="outlined"
-            keyboardType="decimal-pad"
-            error={Boolean(paidError)}
-            style={styles.input}
-          />
-          {paidError ? <HelperText type="error">{paidError}</HelperText> : null}
-
-          <Text style={styles.fieldLabel}>Ödəniş üsulu</Text>
-          <SegmentedButtons
-            value={method}
-            onValueChange={(v) => setMethod(v as PaymentMethod)}
-            buttons={(['CASH', 'CARD', 'TRANSFER', 'OTHER'] as PaymentMethod[]).map((m) => ({
-              value: m,
-              label: METHOD_LABEL[m],
-            }))}
-            style={styles.input}
-          />
-
-          {/* Preview block. The server recalculates and its result is stored. */}
-          <View style={[styles.preview, paidError && styles.previewError]}>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Ümumi məbləğ</Text>
-              <Text style={styles.previewValue}>{formatMoney(total)}</Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Qalıq borc</Text>
-              <Text style={[styles.previewValue, { color: debt > 0 ? colors.danger : colors.success }]}>
-                {formatMoney(debt)}
-              </Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Status</Text>
-              <Text style={styles.previewValue}>
-                {previewStatus === 'PAID' ? 'Ödənilib' : previewStatus === 'PARTIAL' ? 'Qismən ödənilib' : 'Borc'}
-              </Text>
-            </View>
-            <Text style={styles.previewNote}>
-              Bu hesablamalar yalnız önizlədir. Yekun məbləğ serverdə hesablanılır.
-            </Text>
-          </View>
 
           <Button
             mode="contained"
@@ -364,11 +410,23 @@ const styles = StyleSheet.create({
   },
   offlineText: { color: colors.warning, fontSize: 12 },
   sectionTitle: { fontSize: 15, fontWeight: '600', color: colors.primaryDark, marginBottom: spacing.sm },
+  spaced: { marginTop: spacing.lg },
+  hint: { fontSize: 12, color: colors.textMuted },
   input: { backgroundColor: colors.surface },
   half: { flex: 1, backgroundColor: colors.surface },
   row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
   chip: { marginBottom: 2 },
+  priceNote: {
+    backgroundColor: colors.infoBg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${colors.info}44`,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+  },
+  priceNoteText: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+  priceNoteStrong: { fontWeight: '700', color: colors.info },
   selectedBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -382,20 +440,10 @@ const styles = StyleSheet.create({
   selectedText: { color: colors.success, fontSize: 13, fontWeight: '500' },
   divider: { marginVertical: spacing.lg },
   fieldLabel: { fontSize: 12, color: colors.textMuted, marginBottom: spacing.xs },
-  preview: {
-    backgroundColor: colors.infoBg,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: `${colors.info}44`,
-    padding: spacing.md,
-    gap: spacing.xs,
-    marginTop: spacing.md,
-  },
-  previewError: { borderColor: colors.danger, backgroundColor: colors.dangerBg },
   previewRow: { flexDirection: 'row', justifyContent: 'space-between' },
   previewLabel: { fontSize: 13, color: colors.textMuted },
   previewValue: { fontSize: 14, fontWeight: '700', color: colors.text },
-  previewNote: { fontSize: 10, color: colors.textMuted, marginTop: spacing.xs, fontStyle: 'italic' },
+  previewNote: { fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, fontStyle: 'italic' },
   save: { marginTop: spacing.lg },
   saveContent: { height: 52 },
   footer: { textAlign: 'center', fontSize: 11, color: colors.textMuted, marginTop: spacing.sm },

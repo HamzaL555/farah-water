@@ -55,6 +55,20 @@ enum DebtAdjustmentType {
   INCREASE //           -> increases what is owed
 }
 
+/// What kind of water the bottles held. Filtered and spring are priced
+/// separately, because the company buys and sells them at different rates.
+enum WaterType {
+  FILTERED
+  SPRING
+}
+
+/// Where the bottles went. A home delivery has a free-text address; a company
+/// delivery names a company and one of its offices, which fixes the price.
+enum DestinationType {
+  HOME
+  COMPANY
+}
+
 // ============================== USERS ======================================
 
 model User {
@@ -137,6 +151,45 @@ model Customer {
   @@map("customers")
 }
 
+// ============================= COMPANIES ====================================
+
+/// A business the company delivers to. Its price per bottle is fixed by the
+/// contract, split by water type, and is what makes a company delivery
+/// self-pricing: the worker never types a price for one.
+model Company {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  filteredPrice Decimal  @default(0) @db.Decimal(12, 2)
+  springPrice   Decimal  @default(0) @db.Decimal(12, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  offices    Office[]
+  deliveries Delivery[]
+
+  @@map("companies")
+}
+
+/// A delivery point inside a company. "Bash ofis" is where the main desk is;
+/// the rest are separate buildings with their own stock needs.
+model Office {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  deliveries Delivery[]
+
+  @@unique([companyId, name])
+  @@index([companyId, sortOrder])
+  @@map("offices")
+}
+
 // ============================= DELIVERIES ==================================
 
 /// A delivery is the financial root object. It owns exactly one debt and an
@@ -154,6 +207,14 @@ model Delivery {
   workerId     String
   address      String
   contactPhone String?
+
+  /// What was delivered and where it went.
+  waterType       WaterType       @default(FILTERED)
+  destinationType DestinationType @default(HOME)
+  /// Set only when destinationType = COMPANY. ON DELETE RESTRICT: a delivery
+  /// must never lose the office it was recorded against.
+  companyId       String?
+  officeId        String?
 
   bottleCount Int
   unitPrice   Decimal        @db.Decimal(12, 2)
@@ -174,6 +235,8 @@ model Delivery {
 
   customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
   worker    User       @relation("DeliveryWorker", fields: [workerId], references: [id], onDelete: Restrict)
+  company   Company?   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  office    Office?    @relation(fields: [officeId], references: [id], onDelete: Restrict)
   payments  Payment[]
   debtsAdj  DebtAdjustment[]
   inventory InventoryTransaction[]
@@ -182,6 +245,9 @@ model Delivery {
   @@index([customerId, deliveredAt])
   @@index([status])
   @@index([deliveredAt])
+  @@index([destinationType, deliveredAt])
+  @@index([waterType, deliveredAt])
+  @@index([officeId])
   @@map("deliveries")
 }
 

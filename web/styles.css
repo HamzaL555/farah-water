@@ -55,7 +55,7 @@ h1, h2, h3, h4 { margin: 0 0 8px; line-height: 1.25; }
   padding: 28px 24px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
-.login-logo { font-size: 44px; text-align: center; }
+.login-logo { text-align: center; line-height: 0; margin-bottom: 10px; }
 .login-title { text-align: center; color: var(--primary-dark); margin-bottom: 2px; }
 .login-sub { text-align: center; color: var(--muted); margin: 0 0 20px; }
 
@@ -91,6 +91,72 @@ input:focus, select:focus, textarea:focus {
   border-radius: 6px;
 }
 .eye:hover { background: var(--primary-light); }
+
+/* ------------------------------------------------------- segmented choice --- */
+/*
+ * Two large buttons rather than a <select>. "Su" and "Hara" are the two
+ * decisions a driver makes on every stop, and a dropdown costs a tap and
+ * hides the other option; these show both at once. Touch-sized, because this
+ * is used on a phone in a van.
+ */
+.seg { display: flex; gap: 8px; }
+.seg-btn {
+  flex: 1;
+  padding: 12px 10px;
+  font-size: 15px;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.seg-btn:hover { border-color: var(--primary-light); }
+.seg-btn.is-on {
+  color: #fff;
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.seg-btn:focus-visible { outline: 3px solid rgba(11, 111, 164, 0.35); outline-offset: 1px; }
+
+/* --------------------------------------------------------- invoice ----- */
+/* A4-ish sheet. `@media print` hides everything else, so "Çap et" produces the
+   document itself rather than a screenshot of the app. */
+.invoice {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  background: #fff;
+}
+.invoice-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 14px;
+  margin-bottom: 6px;
+  border-bottom: 2px solid var(--primary);
+  font-size: 15px;
+}
+@media print {
+  body > *:not(#modal) { display: none !important; }
+  #modal {
+    position: static !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+  .modal-head, .modal-foot { display: none !important; }
+  .modal-card {
+    box-shadow: none !important;
+    border: 0 !important;
+    max-height: none !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+  .modal-body { overflow: visible !important; padding: 0 !important; }
+  .invoice { border: 0 !important; padding: 0 !important; }
+}
 
 /* --------------------------------------------------------- buttons ---- */
 .btn {
@@ -131,10 +197,14 @@ input:focus, select:focus, textarea:focus {
   height: 100vh;
 }
 .sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: 18px 18px 14px;
   font-size: 19px;
   font-weight: 700;
   border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  line-height: 1;
 }
 .nav { flex: 1; overflow-y: auto; padding: 8px 0; }
 .nav a {
@@ -264,6 +334,7 @@ td.actions { white-space: nowrap; }
 .badge-partial { background: var(--warning-bg); color: var(--warning); }
 .badge-unpaid { background: var(--danger-bg); color: var(--danger); }
 .badge-muted { background: #eef2f5; color: var(--muted); }
+.badge-warn { background: var(--warning-bg); color: var(--warning); }
 .badge-info { background: var(--primary-light); color: var(--primary-dark); }
 
 .alert { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }

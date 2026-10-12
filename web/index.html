@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Farah Su Şirkəti — İdarə paneli</title>
     <meta name="description" content="Farah Su Şirkəti idarə paneli" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%92%A7%3C/text%3E%3C/svg%3E" />
+    <meta name="theme-color" content="#0B4F6C" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Farah Su" />
     <!--
       Absolute paths, because the panel is served at /admin on the API host.
       A relative "app.js" would resolve to /app.js and hit the API catch-all,
       which answers with JSON and the browser refuses to execute it.
     -->
+    <link rel="icon" href="/admin/assets/logo.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/admin/assets/favicon-32.png" sizes="32x32" type="image/png" />
+    <!-- What the phone shows for "Add to Home Screen". -->
+    <link rel="apple-touch-icon" href="/admin/assets/apple-touch-icon.png" />
+    <link rel="manifest" href="/admin/manifest.webmanifest" />
     <link rel="stylesheet" href="/admin/styles.css" />
   </head>
   <body>
     <!-- Login ------------------------------------------------------------ -->
     <div id="login" class="login-wrap">
       <form id="login-form" class="login-card" autocomplete="on">
-        <div class="login-logo">💧</div>
+        <div class="login-logo"><img src="/admin/assets/logo.svg" alt="" width="72" height="72" /></div>
         <h1 class="login-title">Farah Su Şirkəti</h1>
         <p class="login-sub">İdarə paneli</p>
 
@@ -43,7 +51,7 @@
     <div id="scrim" class="scrim" hidden></div>
     <div id="shell" class="shell" hidden>
       <aside class="sidebar">
-        <div class="sidebar-brand"><span>💧</span> Farah</div>
+        <div class="sidebar-brand"><img src="/admin/assets/logo.svg" alt="" width="28" height="28" /> Farah</div>
         <nav id="nav" class="nav"></nav>
         <div class="sidebar-foot">
           <div id="who" class="who"></div>

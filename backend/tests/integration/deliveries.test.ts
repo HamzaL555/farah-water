@@ -117,18 +117,19 @@ describe('deliveries, payments and debts', () => {
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
     const delivery = (await makeDelivery(fx.worker!.token)).body.data;
 
-    // A malicious client posts forged financial fields; they are ignored.
+    // A worker cannot post a payment at all any more, so the request is refused
+    // before any of the forged financial fields are even looked at.
     const res = await api
       .post('/api/v1/payments')
       .set(auth(fx.worker!.token))
       .send({
         idempotencyKey: key(),
         deliveryId: delivery.id,
-        amount: '0',
+        amount: '20.00',
         status: 'PAID',
         debtAmount: 0,
       });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(403);
 
     const after = await prisma.delivery.findUniqueOrThrow({ where: { id: delivery.id } });
     expect(after.status).toBe('UNPAID');
@@ -139,6 +140,9 @@ describe('deliveries, payments and debts', () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
 
+    // A worker forges every money field at once. None of them are accepted:
+    // there is no longer a unitPrice on the create endpoint at all, so the
+    // forged price is dropped and the delivery is born worth zero.
     const res = await api
       .post('/api/v1/deliveries')
       .set(auth(fx.worker!.token))
@@ -148,7 +152,7 @@ describe('deliveries, payments and debts', () => {
         address: 'Test Street 1',
         bottleCount: 10,
         unitPrice: '2.00',
-        paidAmount: '0',
+        paidAmount: '99.00',
         status: 'PAID',
         debtAmount: 0,
         totalAmount: 0,
@@ -157,14 +161,20 @@ describe('deliveries, payments and debts', () => {
     expect(res.statusCode).toBe(201);
     const created = await prisma.delivery.findUniqueOrThrow({ where: { id: res.body.data.id } });
     expect(created.status).toBe('UNPAID');
-    expect(Number(created.debtAmount)).toBe(20);
-    expect(Number(created.totalAmount)).toBe(20);
+    expect(Number(created.unitPrice)).toBe(0);
+    expect(Number(created.totalAmount)).toBe(0);
+    expect(Number(created.paidAmount)).toBe(0);
+    expect(Number(created.debtAmount)).toBe(0);
+    expect(await prisma.payment.count()).toBe(0);
   });
 
-  it('records an initial payment made at delivery time', async () => {
+  it('records the payment the admin states at delivery time', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
 
+    // Setting a price and the cash collected is now one admin action, which is
+    // how it works in the product: the worker records the delivery, the owner
+    // decides what it was worth and what came back.
     const res = await makeDelivery(fx.worker!.token, { bottleCount: 10, unitPrice: '2.00', paidAmount: '12.00' });
     expect(res.statusCode).toBe(201);
     expect(res.body.data.paidAmount).toBe(12);
@@ -172,12 +182,14 @@ describe('deliveries, payments and debts', () => {
     expect(res.body.data.status).toBe('PARTIAL');
   });
 
-  it('rejects an initial payment greater than the total', async () => {
+  it('rejects a payment greater than the total', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
 
+    // The admin may not declare more cash than the delivery is worth.
     const res = await makeDelivery(fx.worker!.token, { paidAmount: '30.00' });
     expect(res.statusCode).toBe(400);
+    expect(res.body.error.message).toMatch(/20\.00/);
   });
 
   it('records an admin debt waiver without inflating revenue', async () => {
@@ -405,8 +417,42 @@ describe('input validation', () => {
     expect(res.statusCode).toBe(422);
   });
 
-  it('rejects a negative unit price', async () => {
-    const res = await makeDelivery(fx.worker!.token, { unitPrice: '-5.00' });
+  it('ignores a unit price sent by a client', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+
+    // Sent raw, because makeDelivery() treats unitPrice as an admin action
+    // rather than passing it through. There is no unitPrice on the create
+    // endpoint any more, so a forged one is dropped and the delivery is born
+    // worth zero - which is exactly the guarantee being tested.
+    const res = await api
+      .post('/api/v1/deliveries')
+      .set(auth(fx.worker!.token))
+      .send({
+        idempotencyKey: key(),
+        customerName: 'Test Customer',
+        address: 'Test Street 1',
+        bottleCount: 10,
+        unitPrice: '7.77',
+        paidAmount: '99.00',
+      });
+
+    expect(res.statusCode).toBe(201);
+    expect(Number(res.body.data.unitPrice)).toBe(0);
+    expect(Number(res.body.data.totalAmount)).toBe(0);
+    expect(Number(res.body.data.paidAmount)).toBe(0);
+    expect(await prisma.payment.count()).toBe(0);
+  });
+
+  it('rejects a negative price set by the admin', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+    const delivery = (await makeDelivery(fx.worker!.token)).body.data;
+
+    const res = await api
+      .patch(`/api/v1/deliveries/${delivery.id}`)
+      .set(auth(fx.admin!.token))
+      .send({ unitPrice: '-5.00', reason: 'səhv' });
     expect(res.statusCode).toBe(422);
   });
 
@@ -443,10 +489,26 @@ describe('input validation', () => {
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
     const delivery = (await makeDelivery(fx.worker!.token)).body.data;
 
+    // As the admin: the request is well-formed enough to reach validation, so
+    // the failure is "no amount" rather than "not allowed".
+    const res = await api
+      .post('/api/v1/payments')
+      .set(auth(fx.admin!.token))
+      .send({ idempotencyKey: key(), deliveryId: delivery.id });
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('refuses a payment posted by a worker', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+    const delivery = (await makeDelivery(fx.worker!.token)).body.data;
+
+    // Even against their own delivery, with a perfectly valid amount.
     const res = await api
       .post('/api/v1/payments')
       .set(auth(fx.worker!.token))
-      .send({ idempotencyKey: key(), deliveryId: delivery.id });
-    expect(res.statusCode).toBe(422);
+      .send({ idempotencyKey: key(), deliveryId: delivery.id, amount: '5.00' });
+    expect(res.statusCode).toBe(403);
+    expect(await prisma.payment.count()).toBe(0);
   });
 });

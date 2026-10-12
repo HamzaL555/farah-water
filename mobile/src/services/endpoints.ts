@@ -19,6 +19,7 @@ import type {
   AdminDashboard,
   AppSettings,
   AuditLogEntry,
+  Company,
   Customer,
   CustomerDetail,
   DebtSummaryRow,
@@ -114,9 +115,23 @@ export const deliveriesApi = {
   detail: (id: string) => apiClient.get<DeliveryDetail>(`/deliveries/${id}`),
   update: (
     id: string,
-    patch: { address?: string; note?: string; bottleCount?: number; unitPrice?: string; reason: string },
+    patch: {
+      address?: string;
+      note?: string;
+      bottleCount?: number;
+      unitPrice?: string;
+      /** Admin-only: state what was actually collected. */
+      paidAmount?: string;
+      reason: string;
+    },
   ) => apiClient.patch<Delivery>(`/deliveries/${id}`, patch),
   cancel: (id: string, reason: string) => apiClient.post<Delivery>(`/deliveries/${id}/cancel`, { reason }),
+};
+
+// ------------------------------- companies ---------------------------------
+
+export const companiesApi = {
+  list: () => apiClient.get<Company[]>('/companies'),
 };
 
 // -------------------------------- payments ---------------------------------
@@ -183,18 +198,34 @@ export const reportsApi = {
   monthly: (params: { month?: string; format?: string }) =>
     apiClient.get<Report>('/reports/monthly', params as Record<string, unknown>),
 
+  /** Same idea for a whole year. `year` is "YYYY", "last", or omitted for now. */
+  yearly: (params: { year?: string; format?: string }) =>
+    apiClient.get<Report>('/reports/yearly', params as Record<string, unknown>),
+
   /**
    * Fetches a CSV/PDF/XLSX export.
    * The endpoint returns the file with Content-Disposition; we surface the raw
-   * body so the caller can save/share it. Path lets the caller target either
-   * /reports or /reports/monthly.
+   * body so the caller can save/share it. `monthly`/`yearly` pick the dedicated
+   * endpoints, which carry their own month/year instead of a type + range.
+   *
+   * The parameter type is deliberately loose: the three request shapes really
+   * are different, and a union here would only push the checking onto every
+   * call site without catching a mistake the server would not catch anyway.
    */
   async raw(
-    params: ReportParams & { format: ReportFormat; month?: string; monthly?: boolean },
+    params: Omit<ReportParams, 'type'> & {
+      format: ReportFormat;
+      /** Present for /reports, absent for the monthly/yearly endpoints. */
+      type?: ReportParams['type'];
+      month?: string;
+      year?: string;
+      monthly?: boolean;
+      yearly?: boolean;
+    },
   ): Promise<{ body: string; base64: boolean; filename: string }> {
     const { withQuery } = await import('./api');
     const tokens = await (await import('./secureStorage')).loadTokens();
-    const path = params.monthly ? '/reports/monthly' : '/reports';
+    const path = params.yearly ? '/reports/yearly' : params.monthly ? '/reports/monthly' : '/reports';
     const url = `${apiClient.getBaseUrl()}${path}${withQuery('', params as unknown as Record<string, unknown>)}`;
 
     const accept =

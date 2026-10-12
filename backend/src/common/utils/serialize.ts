@@ -98,6 +98,10 @@ type DeliveryRow = {
   workerId: string;
   address: string;
   contactPhone: string | null;
+  waterType: string;
+  destinationType: string;
+  companyId: string | null;
+  officeId: string | null;
   bottleCount: number;
   unitPrice: Prisma.Decimal;
   totalAmount: Prisma.Decimal;
@@ -111,6 +115,8 @@ type DeliveryRow = {
   createdAt: Date;
   customer?: { id: string; name: string; phone: string | null; address: string } | null;
   worker?: { id: string; fullName: string; username: string } | null;
+  company?: { id: string; name: string } | null;
+  office?: { id: string; name: string } | null;
 };
 
 export function serializeDelivery(d: DeliveryRow) {
@@ -120,6 +126,10 @@ export function serializeDelivery(d: DeliveryRow) {
     workerId: d.workerId,
     address: d.address,
     contactPhone: d.contactPhone,
+    waterType: d.waterType,
+    destinationType: d.destinationType,
+    companyId: d.companyId ?? null,
+    officeId: d.officeId ?? null,
     bottleCount: d.bottleCount,
     unitPrice: moneyOut(d.unitPrice),
     totalAmount: moneyOut(d.totalAmount),
@@ -135,6 +145,8 @@ export function serializeDelivery(d: DeliveryRow) {
     customerPhone: d.customer?.phone ?? null,
     workerName: d.worker?.fullName ?? null,
     workerUsername: d.worker?.username ?? null,
+    companyName: d.company?.name ?? null,
+    officeName: d.office?.name ?? null,
   };
 }
 

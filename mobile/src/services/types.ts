@@ -10,6 +10,7 @@ import type {
   Delivery,
   DeliveryDetail,
   DeliveryStatus,
+  DestinationType,
   InventorySummary,
   InventoryTransaction,
   InventoryTxType,
@@ -20,6 +21,7 @@ import type {
   Report,
   RevenueBreakdown,
   User,
+  WaterType,
   WorkerDashboard,
   WorkerStats,
 } from '../types';
@@ -109,18 +111,25 @@ export interface AuthResult {
 
 // ------------------------------ payloads ----------------------------------
 
+/**
+ * What a worker submits. Deliberately no `unitPrice` and no `paidAmount`:
+ * the server derives the price and the admin records the money, so a client
+ * that sends either is ignored rather than trusted.
+ */
 export interface CreateDeliveryPayload {
   /** Client-generated UUID. Makes the request idempotent (offline replay safe). */
   idempotencyKey: string;
   customerId?: string;
   customerName?: string;
   customerPhone?: string;
-  address: string;
+  waterType: WaterType;
+  destinationType: DestinationType;
+  companyId?: string;
+  officeId?: string;
+  /** Required when destinationType is HOME. */
+  address?: string;
   contactPhone?: string;
   bottleCount: number;
-  unitPrice: string;
-  paidAmount?: string;
-  paymentMethod?: PaymentMethod;
   workerId?: string;
   deliveredAt?: string;
   note?: string;
@@ -139,6 +148,10 @@ export interface ListDeliveriesParams {
   workerId?: string;
   customerId?: string;
   status?: DeliveryStatus;
+  waterType?: WaterType;
+  destinationType?: DestinationType;
+  companyId?: string;
+  officeId?: string;
   search?: string;
   preset?: DateRangePreset;
   from?: string;
@@ -216,6 +229,8 @@ export interface ReportParams extends RangeParams {
   format?: 'json' | 'csv' | 'pdf' | 'xlsx' | 'xls';
   /** Only meaningful on /reports/monthly: "YYYY-MM", "last", or omitted. */
   month?: string;
+  /** Only meaningful on /reports/yearly: "YYYY", "last", or omitted. */
+  year?: string;
 }
 
 export interface ListInventoryParams {

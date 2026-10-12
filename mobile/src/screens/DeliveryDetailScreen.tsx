@@ -85,6 +85,15 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
   const [cancelReason, setCancelReason] = useState('');
   const [snack, setSnack] = useState<string | null>(null);
 
+  // --------------------------- price dialog ---------------------------------
+  // Admin-only. The worker set neither the price nor the cash collected, so
+  // both arrive as 0 until the owner fills them in here.
+  const [priceOpen, setPriceOpen] = useState(false);
+  const [unitPrice, setUnitPrice] = useState('');
+  const [paidAmount, setPaidAmount] = useState('');
+  const [priceReason, setPriceReason] = useState('');
+  const [priceTouched, setPriceTouched] = useState(false);
+
   const outstanding = data?.debtAmount ?? 0;
   const payAmountNum = parseMoneyInput(payAmount);
   const payError =
@@ -134,6 +143,41 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
       .then((r) => r.data),
   );
   const cancelAction = useSubmit(async () => deliveriesApi.cancel(route.params.deliveryId, cancelReason.trim()).then((r) => r.data));
+  const priceAction = useSubmit(async () =>
+    deliveriesApi
+      .update(route.params.deliveryId, {
+        unitPrice: normalizeMoneyInput(unitPrice),
+        paidAmount: normalizeMoneyInput(paidAmount || '0'),
+        reason: priceReason.trim(),
+      })
+      .then((r) => r.data),
+  );
+
+  const priceNum = parseMoneyInput(unitPrice);
+  const paidNum = parseMoneyInput(paidAmount || '0');
+  const newTotal = Math.round(priceNum * (data?.bottleCount ?? 0) * 100) / 100;
+  const priceError =
+    priceTouched && priceNum < 0
+      ? 'Qiymət negatif ola bilməz.'
+      : priceTouched && paidNum < 0
+        ? 'Ödənilən məbləğ negatif ola bilməz.'
+        : priceTouched && paidNum > newTotal
+          ? `Ödənilən məbləğ ümumi məbləğdən (${newTotal.toFixed(2)}) çox ola bilməz.`
+          : priceTouched && priceReason.trim().length < 3
+            ? 'Düzəliş səbəbi yazılmalıdır.'
+            : null;
+
+  const onSavePrice = async () => {
+    setPriceTouched(true);
+    if (priceNum < 0 || paidNum < 0 || paidNum > newTotal || priceReason.trim().length < 3) return;
+    const result = await priceAction.submit();
+    if (!result) return;
+    setPriceOpen(false);
+    setPriceReason('');
+    setPriceTouched(false);
+    setSnack('Qiymət və ödəniş yazıldı. Borc avtomatik hesablandı.');
+    void run(false);
+  };
 
   const onAddPayment = async () => {
     setPayTouched(true);
@@ -204,6 +248,15 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
   }
 
   const isCancelled = data.status === 'CANCELLED';
+  const priceMissing = Number(data.unitPrice) === 0;
+
+  const openPriceDialog = () => {
+    setUnitPrice(String(data.unitPrice ?? '0'));
+    setPaidAmount(String(data.paidAmount ?? '0'));
+    setPriceReason('');
+    setPriceTouched(false);
+    setPriceOpen(true);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -217,9 +270,21 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
             <Text style={styles.date}>{formatDate(data.deliveredAt)}</Text>
           </View>
           <KeyValueRow label="İşçi" value={data.workerName ?? '-'} />
+          <KeyValueRow label="Su" value={data.waterType === 'SPRING' ? 'Bulaq suyu' : 'Filtr suyu'} />
+          <KeyValueRow
+            label="Hara"
+            value={
+              data.destinationType === 'COMPANY'
+                ? [data.companyName, data.officeName].filter(Boolean).join(' — ') || 'Şirkət'
+                : 'Ev'
+            }
+          />
           <KeyValueRow label="Əlaqə nömrəsi" value={data.contactPhone ?? data.customerPhone ?? '-'} />
           <KeyValueRow label="Bidon sayı" value={String(data.bottleCount)} />
-          <KeyValueRow label="Bir bidonun qiyməti" value={formatMoney(data.unitPrice)} />
+          <KeyValueRow
+            label="Bir bidonun qiyməti"
+            value={priceMissing ? 'qiymət yazılmayıb' : formatMoney(data.unitPrice)}
+          />
           <KeyValueRow label="Qeyd" value={data.note ?? '-'} />
         </SectionCard>
 
@@ -245,13 +310,22 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
         {/* Actions permitted for this role. */}
         {!isCancelled ? (
           <View style={styles.actions}>
-            {data.debtAmount > 0 ? (
-              <Button mode="contained" icon="cash-plus" onPress={() => setPayOpen(true)} style={styles.actionButton}>
-                Ödəniş əlavə et
-              </Button>
-            ) : null}
             {isAdmin ? (
               <>
+                {data.debtAmount > 0 || priceMissing ? (
+                  <Button mode="contained" icon="tag-plus" onPress={openPriceDialog} style={styles.actionButton}>
+                    Qiymət / ödəniş
+                  </Button>
+                ) : (
+                  <Button mode="contained" icon="cash-plus" onPress={() => setPayOpen(true)} style={styles.actionButton}>
+                    Ödəniş əlavə et
+                  </Button>
+                )}
+                {priceMissing ? null : data.debtAmount > 0 ? (
+                  <Button mode="outlined" icon="cash-plus" onPress={() => setPayOpen(true)} style={styles.actionButton}>
+                    Ödəniş əlavə et
+                  </Button>
+                ) : null}
                 <Button mode="outlined" icon="percent" onPress={() => setAdjustOpen(true)} style={styles.actionButton}>
                   Borc düzəlişi
                 </Button>
@@ -259,7 +333,11 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
                   Ləğv et
                 </Button>
               </>
-            ) : null}
+            ) : (
+              <Text style={styles.dialogHint}>
+                Qiyməti və ödənilən pulu administrator yazır.
+              </Text>
+            )}
           </View>
         ) : null}
 
@@ -327,6 +405,54 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
           </>
         ) : null}
       </ScrollView>
+
+      {/* --------------------------- price dialog ------------------------------- */}
+      <Portal>
+        <Dialog visible={priceOpen} onDismiss={() => setPriceOpen(false)}>
+          <Dialog.Title>Qiymət və ödəniş</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.dialogHint}>
+              İşçi qiymət yazmır. Siz yazırsınız — borc avtomatik hesablanır.
+            </Text>
+            <PaperInput
+              label="Bir bidonun qiyməti"
+              value={unitPrice}
+              onChangeText={(t) => setUnitPrice(normalizeMoneyInput(t))}
+              mode="outlined"
+              keyboardType="decimal-pad"
+              style={styles.dialogInput}
+            />
+            <PaperInput
+              label="Ödənilən məbləğ"
+              value={paidAmount}
+              onChangeText={(t) => setPaidAmount(normalizeMoneyInput(t))}
+              mode="outlined"
+              keyboardType="decimal-pad"
+              style={styles.dialogInput}
+            />
+            <Text style={styles.dialogHint}>
+              {`${data.bottleCount} bidon × ${priceNum.toFixed(2)} = `}
+              <Text style={{ fontWeight: '700' }}>{formatMoney(newTotal)}</Text>
+            </Text>
+            <PaperInput
+              label="Səbəb"
+              value={priceReason}
+              onChangeText={setPriceReason}
+              mode="outlined"
+              multiline
+              style={styles.dialogInput}
+            />
+            {priceError ? <HelperText type="error">{priceError}</HelperText> : null}
+            {priceAction.error ? <HelperText type="error">{priceAction.error}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setPriceOpen(false)}>Ləğv et</Button>
+            <Button onPress={onSavePrice} loading={priceAction.submitting}>
+              Yadda saxla
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
 
       {/* --------------------------- add payment dialog ------------------------ */}
       <Portal>

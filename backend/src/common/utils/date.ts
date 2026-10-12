@@ -79,6 +79,27 @@ export function formatDDMMYYYY(value: Date | string | null | undefined): string 
   return `${String(day).padStart(2, '0')}.${String(m + 1).padStart(2, '0')}.${y}`;
 }
 
+/**
+ * The clock time on its own, in company-local time.
+ *
+ * A date alone cannot separate two deliveries on the same day, which matters
+ * when reconciling a driver's route against the stock ledger.
+ */
+export function formatTimeHHMM(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const shifted = new Date(d.getTime() + tzOffsetMinutes() * 60_000);
+  return `${String(shifted.getUTCHours()).padStart(2, '0')}:${String(shifted.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/** Date and time together, for records where the order matters. */
+export function formatDDMMYYYYHHMM(value: Date | string | null | undefined): string {
+  const date = formatDDMMYYYY(value);
+  const time = formatTimeHHMM(value);
+  return date && time ? `${date} ${time}` : date || time;
+}
+
 export type DateRangePreset =
   | 'today'
   | 'yesterday'

@@ -1,9 +1,11 @@
 import {
   DeliveryStatus,
   DebtAdjustmentType,
+  DestinationType,
   PaymentMethod,
   Prisma,
   Role,
+  WaterType,
 } from '@prisma/client';
 import { prisma } from '../prisma';
 import { AppError, badRequest, forbidden, notFound } from '../common/utils/errors';
@@ -64,15 +66,35 @@ export interface CreateDeliveryInput {
   customerId?: string;
   customerName?: string;
   customerPhone?: string;
-  address: string;
+  address?: string;
   contactPhone?: string;
+  waterType?: WaterType;
+  destinationType?: DestinationType;
+  companyId?: string;
+  officeId?: string;
   bottleCount: number;
-  unitPrice: string | number;
-  paidAmount?: string | number;
-  paymentMethod?: PaymentMethod;
   workerId?: string;
   deliveredAt?: string;
   note?: string;
+}
+
+/**
+ * The price of one bottle, decided by the server and never by the client.
+ *
+ * A company delivery is self-pricing: the company holds a contract price per
+ * water type, so the amount cannot be argued with in the field. A home delivery
+ * has no such contract, so it starts at 0 and the admin writes the real price
+ * afterwards - see `updateDelivery`.
+ */
+function resolveUnitPrice(
+  destinationType: DestinationType,
+  waterType: WaterType,
+  company: { filteredPrice: Prisma.Decimal; springPrice: Prisma.Decimal } | null,
+): Prisma.Decimal {
+  if (destinationType === DestinationType.COMPANY && company) {
+    return waterType === WaterType.SPRING ? round2(company.springPrice) : round2(company.filteredPrice);
+  }
+  return new Prisma.Decimal(0);
 }
 
 export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
@@ -80,14 +102,52 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
   if (!Number.isInteger(input.bottleCount) || input.bottleCount <= 0) {
     throw badRequest('Bidon sayı müsbət tam ədəd olmalıdır.');
   }
-  const address = input.address?.trim();
-  if (!address) throw badRequest('Çatdırılma ünvanı tələb olunur.');
+
+  const waterType = input.waterType ?? WaterType.FILTERED;
+  const destinationType = input.destinationType ?? DestinationType.HOME;
+
+  // ---- resolve the destination ------------------------------------------
+  // A company delivery is identified by company + office, not by a typed
+  // address: the office name is the address. Recording both would let the two
+  // disagree, and every report grouped by office would then be wrong.
+  let companyId: string | null = null;
+  let officeId: string | null = null;
+  let address: string;
+
+  if (destinationType === DestinationType.COMPANY) {
+    if (!input.companyId || !input.officeId) {
+      throw badRequest('Şirkətə çatdırılmada şirkət və ofis seçilməlidir.');
+    }
+    const office = await prisma.office.findUnique({
+      where: { id: input.officeId },
+      include: { company: { select: { id: true, name: true, isActive: true, filteredPrice: true, springPrice: true } } },
+    });
+    if (!office) throw notFound('Ofis tapılmadı.');
+    if (!office.isActive) throw badRequest('Bu ofis artıq fəaliyyət göstərmir.');
+    if (office.companyId !== input.companyId) {
+      throw badRequest('Seçilmiş ofis seçilmiş şirkətə aid deyil.');
+    }
+    if (!office.company.isActive) throw badRequest('Bu şirkət artıq fəaliyyət göstərmir.');
+    companyId = office.company.id;
+    officeId = office.id;
+    address = `${office.company.name} - ${office.name}`;
+  } else {
+    address = input.address?.trim() ?? '';
+    if (address.length < 3) throw badRequest('Evə çatdırılmada ünvan ən azı 3 simvol olmalıdır.');
+  }
+
   if (!input.customerId && !input.customerName?.trim()) {
     throw badRequest('Müştərinin adı və ya müştəri seçilməlidir.');
   }
 
-  const unitPrice = round2(new Prisma.Decimal(input.unitPrice));
-  if (unitPrice.isNegative()) throw badRequest('Bir bidonun qiyməti negatif ola bilməz.');
+  // ---- price: server-decided --------------------------------------------
+  const company = companyId
+    ? await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { filteredPrice: true, springPrice: true },
+      })
+    : null;
+  const unitPrice = resolveUnitPrice(destinationType, waterType, company);
 
   // Workers always deliver as themselves; an admin may record on someone's behalf.
   const workerId = actor.role === Role.ADMIN && input.workerId ? input.workerId : actor.id;
@@ -109,15 +169,6 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
   }
 
   const totalAmount = round2(unitPrice.mul(input.bottleCount));
-
-  let initialPaid = new Prisma.Decimal(input.paidAmount ?? 0);
-  if (initialPaid.isNegative()) throw badRequest('Ödənilən məbləğ negatif ola bilməz.');
-  initialPaid = round2(initialPaid);
-  if (initialPaid.greaterThan(totalAmount)) {
-    throw badRequest(
-      `Ödənilən məbləğ ümumi məbləğdən (${totalAmount.toFixed(2)}) çox ola bilməz.`,
-    );
-  }
 
   const result = await prisma.$transaction(async (tx) => {
     // Idempotency: the same key always returns the same delivery.
@@ -169,9 +220,16 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
         workerId,
         address,
         contactPhone: input.contactPhone ?? null,
+        waterType,
+        destinationType,
+        companyId,
+        officeId,
         bottleCount: input.bottleCount,
         unitPrice,
         totalAmount,
+        // Always starts unpaid. The worker neither collects nor declares money;
+        // the admin records what was actually received. A delivery that began
+        // as PAID would be indistinguishable from one nobody ever paid for.
         paidAmount: new Prisma.Decimal(0),
         debtAmount: totalAmount,
         status: DeliveryStatus.UNPAID,
@@ -179,23 +237,6 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
         note: input.note ?? null,
       },
     });
-
-    // ---- record the real payment collected at delivery time ----------------
-    if (initialPaid.greaterThan(0)) {
-      await tx.payment.create({
-        data: {
-          idempotencyKey: `${input.idempotencyKey}:initial`,
-          deliveryId: createdDelivery.id,
-          customerId,
-          workerId,
-          amount: initialPaid,
-          method: input.paymentMethod ?? PaymentMethod.CASH,
-          paidAt: deliveredAt,
-          note: 'Çatdırılma zamanı alınan ödəniş',
-          recordedById: actor.id,
-        },
-      });
-    }
 
     // ---- move the bottles out of the worker's hands (atomic + idempotent) --
     await applyInventoryTx(tx, {
@@ -227,7 +268,14 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
       entityType: 'delivery',
       entityId: (result.delivery as { id: string }).id,
       after: result.delivery,
-      meta: { bottleCount: input.bottleCount, totalAmount: totalAmount.toFixed(2) },
+      meta: {
+        bottleCount: input.bottleCount,
+        totalAmount: totalAmount.toFixed(2),
+        waterType,
+        destinationType,
+        companyId,
+        officeId,
+      },
     });
   }
 
@@ -238,6 +286,10 @@ export interface ListDeliveriesQuery {
   workerId?: string;
   customerId?: string;
   status?: DeliveryStatus;
+  waterType?: WaterType;
+  destinationType?: DestinationType;
+  companyId?: string;
+  officeId?: string;
   search?: string;
   preset?: DateRangePreset;
   from?: string;
@@ -261,6 +313,10 @@ export async function listDeliveries(query: ListDeliveriesQuery, actor: Actor) {
     ...(effectiveWorkerId ? { workerId: effectiveWorkerId } : {}),
     ...(query.customerId ? { customerId: query.customerId } : {}),
     ...(query.status ? { status: query.status } : {}),
+    ...(query.waterType ? { waterType: query.waterType } : {}),
+    ...(query.destinationType ? { destinationType: query.destinationType } : {}),
+    ...(query.companyId ? { companyId: query.companyId } : {}),
+    ...(query.officeId ? { officeId: query.officeId } : {}),
     ...(query.onlyDebts ? { debtAmount: { gt: 0 } } : {}),
     ...(start || end
       ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } }
@@ -271,6 +327,8 @@ export async function listDeliveries(query: ListDeliveriesQuery, actor: Actor) {
             { customer: { name: { contains: query.search, mode: 'insensitive' } } },
             { address: { contains: query.search, mode: 'insensitive' } },
             { contactPhone: { contains: query.search } },
+            { office: { name: { contains: query.search, mode: 'insensitive' } } },
+            { company: { name: { contains: query.search, mode: 'insensitive' } } },
           ],
         }
       : {}),
@@ -290,6 +348,8 @@ export async function listDeliveries(query: ListDeliveriesQuery, actor: Actor) {
       include: {
         customer: { select: { id: true, name: true, phone: true, address: true } },
         worker: { select: { id: true, fullName: true, username: true } },
+        company: { select: { id: true, name: true } },
+        office: { select: { id: true, name: true } },
       },
     }),
     prisma.delivery.count({ where }),
@@ -304,6 +364,8 @@ export async function getDeliveryDetail(id: string, actor: Actor) {
     include: {
       customer: { select: { id: true, name: true, phone: true, address: true } },
       worker: { select: { id: true, fullName: true, username: true } },
+      company: { select: { id: true, name: true } },
+      office: { select: { id: true, name: true } },
       payments: {
         orderBy: { paidAt: 'desc' },
         include: { recordedBy: { select: { id: true, fullName: true } } },
@@ -397,7 +459,15 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
 
 export async function updateDelivery(
   id: string,
-  patch: { address?: string; note?: string; bottleCount?: number; unitPrice?: string | number; reason: string },
+  patch: {
+    address?: string;
+    note?: string;
+    bottleCount?: number;
+    unitPrice?: string | number;
+    /** The money the admin says was actually collected. See below. */
+    paidAmount?: string | number;
+    reason: string;
+  },
   actor: Actor,
   req?: never,
 ) {
@@ -433,7 +503,17 @@ export async function updateDelivery(
     const finalUnitPrice =
       patch.unitPrice !== undefined ? round2(new Prisma.Decimal(patch.unitPrice)) : before.unitPrice;
     const finalBottleCount = patch.bottleCount ?? before.bottleCount;
-    data.totalAmount = round2(finalUnitPrice.mul(finalBottleCount));
+    const finalTotal = round2(finalUnitPrice.mul(finalBottleCount));
+    data.totalAmount = finalTotal;
+
+    // debt_amount must move in the SAME statement as total_amount. The table
+    // carries `CHECK (debt_amount = total_amount - paid_amount)`, so updating
+    // only the total leaves the row momentarily inconsistent and PostgreSQL
+    // rejects it. `paidAmount` is untouched here, so this is exactly the
+    // identity recalcDelivery is about to re-derive from the ledger.
+    if (!finalTotal.equals(before.totalAmount)) {
+      data.debtAmount = finalTotal.minus(before.paidAmount);
+    }
 
     if (bottleDelta > 0) {
       await applyInventoryTx(tx, {
@@ -462,19 +542,66 @@ export async function updateDelivery(
     }
 
     await tx.delivery.update({ where: { id }, data });
-    const updated = await recalcDelivery(tx, id);
+    let updated = await recalcDelivery(tx, id);
+
+    // ---- the admin states how much was actually collected -------------------
+    // This writes a real payment row rather than editing `paidAmount`, so the
+    // money ledger stays the single source of truth and revenue keeps meaning
+    // "cash that arrived". Setting a different figure voids the previous entry
+    // and records the correction with the admin's reason attached, which is
+    // what makes the change auditable instead of a silent number edit.
+    if (patch.paidAmount !== undefined) {
+      const target = round2(new Prisma.Decimal(patch.paidAmount));
+      if (target.isNegative()) throw badRequest('Ödənilən məbləğ negatif ola bilməz.');
+      if (target.greaterThan(updated.totalAmount)) {
+        throw badRequest(
+          `Ödənilən məbləğ ümumi məbləğdən (${updated.totalAmount.toFixed(2)}) çox ola bilməz.`,
+        );
+      }
+
+      const existing = await tx.payment.findMany({ where: { deliveryId: id, voidedAt: null } });
+      const nowPaid = existing.reduce((sum, p) => sum.plus(p.amount), new Prisma.Decimal(0));
+
+      if (!target.equals(nowPaid)) {
+        for (const p of existing) {
+          await tx.payment.update({
+            where: { id: p.id },
+            data: { voidedAt: new Date(), voidedById: actor.id, voidReason: patch.reason },
+          });
+        }
+        if (target.greaterThan(0)) {
+          await tx.payment.create({
+            data: {
+              // The delivery id plus the new amount makes a retry of this exact
+              // correction a no-op rather than a second payment.
+              idempotencyKey: `delivery:paid:${id}:${target.toFixed(2)}`,
+              deliveryId: id,
+              customerId: before.customerId,
+              workerId: before.workerId,
+              amount: target,
+              method: PaymentMethod.CASH,
+              paidAt: new Date(),
+              note: `Administrator tərəfindən düzəldildi: ${patch.reason}`,
+              recordedById: actor.id,
+            },
+          });
+        }
+      }
+      updated = await recalcDelivery(tx, id);
+    }
+
     const serialized = serializeDelivery(updated as never);
 
     await audit({
       actorId: actor.id,
       actorName: actor.fullName,
       actorRole: actor.role,
-      action: 'delivery.updated',
+      action: patch.paidAmount !== undefined ? 'delivery.payment_corrected' : 'delivery.updated',
       entityType: 'delivery',
       entityId: id,
       before: serializeDelivery(before as never),
       after: serialized,
-      meta: { reason: patch.reason, bottleDelta },
+      meta: { reason: patch.reason, bottleDelta, paidAmountSet: patch.paidAmount },
       req,
     });
     return serialized;

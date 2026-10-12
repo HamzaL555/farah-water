@@ -21,13 +21,21 @@ export interface CreatePaymentInput {
 /**
  * Records real cash received against a delivery.
  *
+ * ADMIN ONLY. A worker no longer records payments: they deliver, and the
+ * admin decides what was collected and enters it. Letting the driver mark
+ * their own delivery paid meant the revenue figure was whatever the person
+ * carrying the money said it was, which is the one number an owner cannot
+ * audit from the outside.
+ *
  * - `idempotencyKey` is UNIQUE: replaying the same request (e.g. an offline
  *   queue retry) returns the original payment instead of double-counting it.
  * - Payment status/debt are recomputed from the ledger, never set by the client.
- * - Only the owning worker (or an admin) may post against a delivery.
  */
 export async function createPayment(input: CreatePaymentInput, actor: Actor, req?: never) {
   if (!input.idempotencyKey) throw badRequest('idempotencyKey tələb olunur.');
+  if (actor.role !== Role.ADMIN) {
+    throw forbidden('Ödənişi yalnız administrator qeyd edə bilər.');
+  }
 
   const amount = round2(new Prisma.Decimal(input.amount ?? 0));
   if (!amount.greaterThan(0)) throw badRequest('Ödəniş məbləği sıfırdan böyük olmalıdır.');
@@ -54,13 +62,10 @@ export async function createPayment(input: CreatePaymentInput, actor: Actor, req
   if (delivery.status === DeliveryStatus.CANCELLED) {
     throw badRequest('Ləğv edilmiş çatdırılma üçün ödəniş qeydə alına bilməz.');
   }
-  if (actor.role !== Role.ADMIN && delivery.workerId !== actor.id) {
-    throw forbidden('Bu çatdırılma sizin hesabınıza aid deyil.');
-  }
 
   // Guards against inflating revenue beyond what the customer actually owes.
   const outstanding = delivery.totalAmount.minus(delivery.paidAmount);
-  if (amount.greaterThan(outstanding) && !(actor.role === Role.ADMIN && input.allowOverpayment)) {
+  if (amount.greaterThan(outstanding) && !input.allowOverpayment) {
     throw badRequest(
       `Bu çatdırılmanın qalan borcu ${outstanding.toFixed(2)} AZN-dir. Bu məbləğdən artıq ödəniş qeydə alına bilməz.`,
     );

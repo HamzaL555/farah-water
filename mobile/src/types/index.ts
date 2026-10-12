@@ -75,6 +75,10 @@ export interface Delivery {
   workerId: string;
   address: string;
   contactPhone: string | null;
+  waterType: WaterType;
+  destinationType: DestinationType;
+  companyId: string | null;
+  officeId: string | null;
   bottleCount: number;
   unitPrice: number;
   totalAmount: number;
@@ -90,6 +94,30 @@ export interface Delivery {
   customerPhone: string | null;
   workerName: string | null;
   workerUsername: string | null;
+  companyName: string | null;
+  officeName: string | null;
+}
+
+/** Which water. Priced separately from SPRING. */
+export type WaterType = 'FILTERED' | 'SPRING';
+
+/** Where the bottles went. COMPANY deliveries carry companyId + officeId. */
+export type DestinationType = 'HOME' | 'COMPANY';
+
+export interface Office {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface Company {
+  id: string;
+  name: string;
+  filteredPrice: number;
+  springPrice: number;
+  isActive: boolean;
+  offices: Office[];
 }
 
 export interface Payment {

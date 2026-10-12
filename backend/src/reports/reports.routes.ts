@@ -7,10 +7,70 @@ import { reportSchema } from '../common/schemas';
 import { buildReport, reportToCsv, reportToPdf } from './reports.service';
 import { reportToXlsx, monthName } from './reports.xlsx';
 import { reportToXls } from './reports.xls';
-import { startOfLocalMonth, endOfLocalMonth, tzOffsetMinutes } from '../common/utils/date';
+import { startOfLocalMonth, endOfLocalMonth, startOfLocalYear, endOfLocalYear, tzOffsetMinutes } from '../common/utils/date';
 
 export const reportsRouter = Router();
 reportsRouter.use(requireAuth);
+
+/**
+ * Renders one bounded period as a report in the requested format.
+ *
+ * Daily, monthly and yearly reports are the same dataset over a different
+ * range; only the label and the range differ. Keeping the range resolution
+ * here means the phone and the web cannot drift apart on what "this month"
+ * means, which is the whole reason these are endpoints rather than a date
+ * pair built by the client.
+ */
+async function sendPeriodReport(
+  res: Parameters<Parameters<typeof asyncHandler>[0]>[1],
+  req: Parameters<Parameters<typeof asyncHandler>[0]>[0],
+  opts: { start: Date; end: Date; title: string; base: string; meta: Record<string, unknown> },
+) {
+  const actor = actorOf(req);
+  const format = (req.query as { format?: string }).format ?? 'json';
+
+  // buildReport resolves its range with `new Date(from)`, which cannot parse a
+  // DD.MM.YYYY display string. Pass the instants directly instead.
+  const report = await buildReport(
+    {
+      type: 'period',
+      from: opts.start.toISOString(),
+      to: new Date(opts.end.getTime() - 86_400_000).toISOString(),
+    },
+    actor,
+  );
+  report.title = opts.title;
+
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${opts.base}.csv"`);
+    res.send(reportToCsv(report));
+    return;
+  }
+  if (format === 'pdf') {
+    const buffer = await reportToPdf(report);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${opts.base}.pdf"`);
+    res.end(buffer);
+    return;
+  }
+  if (format === 'xlsx') {
+    const buffer = await reportToXlsx(report);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${opts.base}.xlsx"`);
+    res.end(buffer);
+    return;
+  }
+  if (format === 'xls') {
+    const buffer = reportToXls(report);
+    res.setHeader('Content-Type', 'application/vnd.ms-excel');
+    res.setHeader('Content-Disposition', `attachment; filename="${opts.base}.xls"`);
+    res.end(buffer);
+    return;
+  }
+
+  res.json({ data: report, meta: opts.meta });
+}
 
 /**
  * Monthly report.
@@ -27,7 +87,6 @@ reportsRouter.get(
   // the current month.
   validate(reportSchema.pick({ format: true, month: true }), 'query'),
   asyncHandler(async (req, res) => {
-    const actor = actorOf(req);
     const { month } = req.query as { month?: string };
 
     let anchor: Date;
@@ -54,55 +113,50 @@ reportsRouter.get(
     const local = new Date(anchor.getTime() + tzOffsetMinutes() * 60_000);
     const label = `${monthName(local.getUTCMonth())} ${local.getUTCFullYear()}`;
 
-    // buildReport resolves its range with `new Date(from)`, which cannot parse
-    // the DD.MM.YYYY display string ("30.09.2026" is Invalid Date). Pass the
-    // instants directly instead of formatting them.
-    const report = await buildReport(
-      {
-        type: 'period',
-        from: start.toISOString(),
-        to: new Date(end.getTime() - 86_400_000).toISOString(),
-      },
-      actor,
-    );
+    await sendPeriodReport(res, req, {
+      start,
+      end,
+      title: `Aylıq hesabat — ${label}`,
+      base: `ayliq-hesabat-${label.toLowerCase().replace(/\s+/g, '-')}`,
+      meta: { month: label },
+    });
+  }),
+);
 
-    // The caller asked for a monthly report, so label it as one even though the
-    // underlying dataset is the same period report.
-    report.title = `Aylıq hesabat — ${label}`;
+/**
+ * Yearly report. Same reasoning as `/monthly`: `?year=YYYY` selects the year,
+ * `?year=last` the previous one, omitted means the current year. Always
+ * bounded - an unbounded year would silently become "all time".
+ */
+reportsRouter.get(
+  '/yearly',
+  validate(reportSchema.pick({ format: true, year: true }), 'query'),
+  asyncHandler(async (req, res) => {
+    const { year } = req.query as { year?: string };
 
-    const base = `ayliq-hesabat-${label.toLowerCase().replace(/\s+/g, '-')}`;
-    const format = (req.query as { format?: string }).format ?? 'json';
-
-    if (format === 'csv') {
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${base}.csv"`);
-      res.send(reportToCsv(report));
-      return;
-    }
-    if (format === 'pdf') {
-      const buffer = await reportToPdf(report);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${base}.pdf"`);
-      res.end(buffer);
-      return;
-    }
-    if (format === 'xlsx') {
-      const buffer = await reportToXlsx(report);
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${base}.xlsx"`);
-      res.end(buffer);
-      return;
+    const thisYear = startOfLocalYear();
+    let anchor: Date;
+    if (year === 'last') {
+      anchor = new Date(thisYear.getTime());
+      anchor.setUTCFullYear(anchor.getUTCFullYear() - 1);
+    } else if (year && /^\d{4}$/.test(year)) {
+      anchor = new Date(Date.UTC(Number(year), 0, 1));
+    } else {
+      anchor = thisYear;
     }
 
-    if (format === 'xls') {
-      const buffer = reportToXls(report);
-      res.setHeader('Content-Type', 'application/vnd.ms-excel');
-      res.setHeader('Content-Disposition', `attachment; filename="${base}.xls"`);
-      res.end(buffer);
-      return;
-    }
+    const start = startOfLocalYear(anchor);
+    const end = endOfLocalYear(anchor);
+    const local = new Date(anchor.getTime() + tzOffsetMinutes() * 60_000);
+    const label = String(local.getUTCFullYear());
 
-    res.json({ data: report, meta: { month: label } });
+    await sendPeriodReport(res, req, {
+      start,
+      end,
+      title: `İllik hesabat — ${label}`,
+      base: `illik-hesabat-${label}`,
+      meta: { year: label },
+    });
   }),
 );
 
