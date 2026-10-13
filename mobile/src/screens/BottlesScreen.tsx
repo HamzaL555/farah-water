@@ -26,8 +26,9 @@ type WriteOffType = 'DAMAGE' | 'LOSS';
 /**
  * Worker stock view.
  *
- * Shows the worker's own bottle count and lets them return unsold bottles or
- * write off damaged/lost ones. Warehouse operations are admin-only.
+ * The worker runs the warehouse from their phone: they record what arrived,
+ * take what they need for the day's deliveries, return the unsold remainder
+ * and write off anything damaged. The admin watches the totals.
  */
 export const BottlesScreen: React.FC = () => {
   const { data, loading, error, run } = useAsync(() => inventoryApi.myStock().then((r) => r.data), []);
@@ -35,10 +36,13 @@ export const BottlesScreen: React.FC = () => {
     () => inventoryApi.transactions({ pageSize: 30 }).then((r) => r.data),
     [],
   );
+  // Read-only: how much is in the warehouse, so "take" can be checked against
+  // a real number before the round trip.
+  const { data: summary, run: runSummary } = useAsync(() => inventoryApi.summary().then((r) => r.data), []);
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([run(), runHistory()]);
-  }, [run, runHistory]);
+    await Promise.all([run(), runHistory(), runSummary()]);
+  }, [run, runHistory, runSummary]);
 
   useFocusEffect(
     useCallback(() => {
@@ -49,6 +53,12 @@ export const BottlesScreen: React.FC = () => {
   const [stockInOpen, setStockInOpen] = useState(false);
   const [stockInCount, setStockInCount] = useState('');
   const [stockInNote, setStockInNote] = useState('');
+
+  // Taking stock out of the warehouse. The driver does this themselves; the
+  // admin only watches the totals.
+  const [takeOpen, setTakeOpen] = useState(false);
+  const [takeCount, setTakeCount] = useState('');
+  const [takeNote, setTakeNote] = useState('');
 
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnCount, setReturnCount] = useState('');
@@ -86,6 +96,17 @@ export const BottlesScreen: React.FC = () => {
       .then((r) => r.data),
   );
 
+  /** Takes stock out of the warehouse into this worker's own hands. */
+  const takeAction = useSubmit(() =>
+    inventoryApi
+      .takeFromWarehouse({
+        bottleCount: parseInt(takeCount || '0', 10),
+        note: takeNote.trim() || undefined,
+        idempotencyKey: `take-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      })
+      .then((r) => r.data),
+  );
+
   const writeOffAction = useSubmit(() =>
     inventoryApi
       .writeOff({
@@ -98,11 +119,15 @@ export const BottlesScreen: React.FC = () => {
   );
 
   const myQuantity = data?.quantity ?? 0;
+  const warehouseQuantity = summary?.warehouseQuantity ?? 0;
   const returnCountNum = parseInt(returnCount || '0', 10);
   const writeOffCountNum = parseInt(writeOffCount || '0', 10);
   const stockInCountNum = parseInt(stockInCount || '0', 10);
+  const takeCountNum = parseInt(takeCount || '0', 10);
 
   const stockInError = stockInCountNum <= 0 ? 'Say daxil edin.' : null;
+  const takeError =
+    takeCountNum <= 0 ? 'Say daxil edin.' : takeCountNum > warehouseQuantity ? `Anbarda ${warehouseQuantity} bidon var.` : null;
 
   const returnError = returnCountNum <= 0 ? 'Say daxil edin.' : returnCountNum > myQuantity ? `Əlinizdə ${myQuantity} bidon var.` : null;
   const writeOffError =
@@ -138,6 +163,18 @@ export const BottlesScreen: React.FC = () => {
     void refreshAll();
   };
 
+  const onTake = async () => {
+    if (takeError) return;
+    const taken = takeCountNum;
+    const result = await takeAction.submit();
+    if (!result) return;
+    setTakeOpen(false);
+    setTakeCount('');
+    setTakeNote('');
+    setSnack(`${taken} bidon götürdünüz. Əlinizdə: ${result.newBalance} bidon.`);
+    void refreshAll();
+  };
+
   const onWriteOff = async () => {
     if (writeOffError) return;
     const result = await writeOffAction.submit();
@@ -164,14 +201,17 @@ export const BottlesScreen: React.FC = () => {
       >
         <View style={styles.row}>
           <StatCard label="Əlimdəki bidonlar" value={String(myQuantity)} icon="📦" accent={colors.primary} />
-          <StatCard label="Anbarda (ümumi)" value={String(history?.total ?? myQuantity)} icon="🏭" accent={colors.info} background={colors.infoBg} />
+          <StatCard label="Anbarda" value={String(warehouseQuantity)} icon="🏭" accent={colors.info} background={colors.infoBg} />
         </View>
 
         <View style={styles.actions}>
           <Button mode="contained" icon="tray-arrow-down" onPress={() => setStockInOpen(true)} style={styles.actionButton}>
             Anbara qəbul
           </Button>
-          <Button mode="contained-tonal" icon="undo" onPress={() => setReturnOpen(true)} style={styles.actionButton}>
+          <Button mode="contained-tonal" icon="tray-arrow-up" onPress={() => setTakeOpen(true)} style={styles.actionButton}>
+            Anbardan götür
+          </Button>
+          <Button mode="outlined" icon="undo" onPress={() => setReturnOpen(true)} style={styles.actionButton}>
             Anbara qaytar
           </Button>
           <Button mode="outlined" icon="alert-circle" onPress={() => setWriteOffOpen(true)} style={styles.actionButton}>
@@ -180,7 +220,7 @@ export const BottlesScreen: React.FC = () => {
         </View>
 
         <Text style={styles.hint}>
-          "Anbara qəbul" — yeni gələn bidonları yaz. Admin dərhal görür. "Anbara qaytar" isə öz əlinizdən artıq qalanı geri qaytarır.
+          "Anbara qəbul" — yeni gələn bidonları yaz. "Anbardan götür" — özünə çatdırma üçün götür. Admin yalnız baxır.
         </Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -253,6 +293,43 @@ export const BottlesScreen: React.FC = () => {
             <Button onPress={() => setStockInOpen(false)}>Ləğv et</Button>
             <Button onPress={onStockIn} loading={stockInAction.submitting} disabled={stockInAction.submitting}>
               Qəbul et
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* take from warehouse dialog */}
+      <Portal>
+        <Dialog visible={takeOpen} onDismiss={() => setTakeOpen(false)}>
+          <Dialog.Title>Anbardan götür</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.dialogHint}>
+              Anbarda: <Text style={{ fontWeight: '700' }}>{warehouseQuantity} bidon</Text>
+              {'\n'}Götürdüyün bidonlar sənin hesabına yazılır.
+            </Text>
+            <PaperInput
+              label="Bidon sayı"
+              value={takeCount}
+              onChangeText={(t) => setTakeCount(t.replace(/[^\d]/g, ''))}
+              mode="outlined"
+              keyboardType="number-pad"
+              error={Boolean(takeCount) && Boolean(takeError)}
+              style={styles.dialogInput}
+            />
+            {takeCount && takeError ? <HelperText type="error">{takeError}</HelperText> : null}
+            <PaperInput
+              label="Qeyd (istəyə bağlı)"
+              value={takeNote}
+              onChangeText={setTakeNote}
+              mode="outlined"
+              style={styles.dialogInput}
+            />
+            {takeAction.error ? <HelperText type="error">{takeAction.error}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setTakeOpen(false)}>Ləğv et</Button>
+            <Button onPress={onTake} loading={takeAction.submitting}>
+              Götür
             </Button>
           </Dialog.Actions>
         </Dialog>

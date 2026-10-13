@@ -98,13 +98,13 @@ describe('inventory and stock accounting', () => {
     const idemKey = key();
     const first = await api
       .post('/api/v1/inventory/stock-in')
-      .set(auth(fx.admin!.token))
+      .set(auth(fx.worker!.token))
       .send({ bottleCount: 100, idempotencyKey: idemKey });
     expect(first.statusCode).toBe(201);
 
     const replay = await api
       .post('/api/v1/inventory/stock-in')
-      .set(auth(fx.admin!.token))
+      .set(auth(fx.worker!.token))
       .send({ bottleCount: 100, idempotencyKey: idemKey });
     expect(replay.statusCode).toBe(200);
     expect(replay.body.meta.duplicate).toBe(true);
@@ -169,9 +169,11 @@ describe('inventory and stock accounting', () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 20);
 
+    // As the worker, so the request gets past the role check and actually
+    // reaches validation.
     const res = await api
       .post('/api/v1/inventory/write-off')
-      .set(auth(fx.admin!.token))
+      .set(auth(fx.worker!.token))
       .send({ type: 'INBOUND', bottleCount: 3, note: 'cheating' });
     expect(res.statusCode).toBe(422);
   });
@@ -214,7 +216,9 @@ describe('inventory and stock accounting', () => {
   it('shows a worker only their own stock', async () => {
     await stockIn(fx.admin!.token, 300);
     await issueStock(fx.admin!.token, fx.worker!.id, 60);
-    await issueStock(fx.admin!.token, fx.worker2!.id, 40);
+    // Each worker takes from the warehouse for themselves; nobody can hand
+    // stock to anybody else.
+    await api.post('/api/v1/inventory/issue').set(auth(fx.worker2!.token)).send({ bottleCount: 40 });
 
     const res = await api.get('/api/v1/inventory/my-stock').set(auth(fx.worker!.token));
     expect(res.body.data.quantity).toBe(60);

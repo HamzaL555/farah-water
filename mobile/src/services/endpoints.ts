@@ -169,8 +169,12 @@ export const inventoryApi = {
   transactions: (params: ListInventoryParams) =>
     apiClient.get<Paginated<InventoryTransaction>>('/inventory/transactions', params as Record<string, unknown>),
   stockIn: (payload: StockMovementPayload) => apiClient.post<StockResult>('/inventory/stock-in', payload),
-  issue: (workerId: string, payload: StockMovementPayload) =>
-    apiClient.post<StockResult>('/inventory/issue', { workerId, ...payload }),
+  /**
+   * Takes bottles out of the warehouse into the caller's own hands. No workerId:
+   * a worker can only move stock to themselves, and the server refuses anyone
+   * else.
+   */
+  takeFromWarehouse: (payload: StockMovementPayload) => apiClient.post<StockResult>('/inventory/issue', payload),
   returnStock: (payload: StockMovementPayload & { workerId?: string }) =>
     apiClient.post<StockResult>('/inventory/return', payload),
   writeOff: (payload: {

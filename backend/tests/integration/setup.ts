@@ -113,11 +113,21 @@ export const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 // ------------------------------ call helpers -------------------------------
 
-export const stockIn = (adminToken: string, bottleCount: number, note = 'test') =>
-  api.post('/api/v1/inventory/stock-in').set(auth(adminToken)).send({ bottleCount, note });
+/**
+ * The warehouse is the worker's to run, so both of these post as the worker.
+ *
+ * The parameters still read as adminToken/issueTo because that is who used to
+ * call them, and renaming every call site would bury the actual change: the
+ * worker token is fetched from the fixture inside, and the named parameters are
+ * ignored.
+ */
+const workerTokenOf = () => fx.worker!.token;
 
-export const issueStock = (adminToken: string, workerId: string, bottleCount: number, note = 'test issue') =>
-  api.post('/api/v1/inventory/issue').set(auth(adminToken)).send({ workerId, bottleCount, note });
+export const stockIn = (_callerToken: string, bottleCount: number, note = 'test') =>
+  api.post('/api/v1/inventory/stock-in').set(auth(workerTokenOf())).send({ bottleCount, note });
+
+export const issueStock = (_callerToken: string, _workerId: string, bottleCount: number, note = 'test issue') =>
+  api.post('/api/v1/inventory/issue').set(auth(workerTokenOf())).send({ bottleCount, note });
 
 export async function makeCustomer(workerToken: string, name = 'Test Customer', address = 'Test Street 1') {
   const res = await api

@@ -579,18 +579,23 @@
   async function pageMyStock(view) {
     var s = await api('GET', '/inventory/my-stock');
     var t = await api('GET', '/inventory/transactions?pageSize=25');
+    // The warehouse total, so the worker can see what is there to take. Read
+    // only - taking is a separate, explicit action.
+    var w = await api('GET', '/inventory/summary');
 
     view.innerHTML =
       '<div class="cards">' +
         card('Əlimdəki bidonlar', String(s.quantity || 0), 'good') +
+        card('Anbarda', String(w.warehouseQuantity || 0)) +
         card('Son yenilənmə', dateTime(s.updatedAt)) +
       '</div>' +
       '<div class="toolbar">' +
         '<button class="btn btn-primary" id="mb-in">+ Anbara qəbul (yeni gələn)</button>' +
-        '<button class="btn btn-secondary" id="mb-back">↩ Anbara qaytar</button>' +
+        '<button class="btn btn-secondary" id="mb-take">→ Anbardan götür</button>' +
+        '<button class="btn btn-outline" id="mb-back">↩ Anbara qaytar</button>' +
         '<button class="btn btn-outline" id="mb-wo">Zədələnmiş / itmiş</button>' +
       '</div>' +
-      '<div class="alert alert-info">Anbara qəbul — yeni gələn bidonların sayını yaz. Admin dərhal görür.</div>' +
+      '<div class="alert alert-info">Yeni gələn bidonları sən qeyd edirsən və özün götürürsən. Admin yalnız baxır.</div>' +
       panel('İnventar tarixçəsi', '', table(
         [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Qeyd' }],
         (t.items || []).map(function (x) {
@@ -611,9 +616,12 @@
           '<option value="DAMAGE">Zədələnmiş</option><option value="LOSS">İtmiş</option>' +
           '</select></label>'
         : '';
+      // Taking is bounded by what is actually in the warehouse; saying so here
+      // stops the round trip that would only come back as a 400.
+      var countHint = mode === 'take' ? 'Anbarda ' + w.warehouseQuantity + ' bidon var' : '';
       openModal(title,
         typePicker +
-        moneyField('b-count', 'Bidon sayı', '') +
+        moneyField('b-count', 'Bidon sayı', '', countHint) +
         (requireNote ? textField('b-note', 'Səbəb', '') : textField('b-note', 'Qeyd (istəyə bağlı)', '')),
         [
           { label: 'Ləğv et', kind: 'outline' },
@@ -625,11 +633,12 @@
             };
             var call;
             if (mode === 'in') call = api('POST', '/inventory/stock-in', body);
+            else if (mode === 'take') call = api('POST', '/inventory/issue', body);
             else if (mode === 'return') call = api('POST', '/inventory/return', body);
             else call = api('POST', '/inventory/write-off', Object.assign({ type: $('#b-type').value }, body));
             return call.then(function (r) {
               closeModal();
-              toast(title + ' · yeni qalıq: ' + r.newBalance, 'ok');
+              toast(title + ' · yeni qalıq: ' + r.newBalance + ' bidon', 'ok');
               navigate('mystock');
             });
           } },
@@ -637,6 +646,7 @@
     };
 
     $('#mb-in').addEventListener('click', function () { stockDialog('Anbara qəbul', 'in', false); });
+    $('#mb-take').addEventListener('click', function () { stockDialog('Anbardan götür', 'take', false); });
     $('#mb-back').addEventListener('click', function () { stockDialog('Anbara qaytar', 'return', false); });
     $('#mb-wo').addEventListener('click', function () { stockDialog('Zədələnmiş / itmiş', 'wo', true); });
   }
@@ -837,6 +847,8 @@
     var s = await api('GET', '/inventory/summary');
     var t = await api('GET', '/inventory/transactions?pageSize=25');
 
+    // Read-only: the worker receives, takes and returns stock; the admin watches
+    // what came in and how much went out.
     var html = '<div class="cards">' +
       card('Anbarda', s.warehouseQuantity || 0) +
       card('İşçilərdə', s.inWorkersHands || 0) +
@@ -847,10 +859,9 @@
       card('İtmiş', s.lostTotal || 0, 'bad') +
       '</div>';
 
-    html += '<div class="toolbar">' +
-      '<button class="btn btn-primary" id="btn-in">+ Anbara qəbul</button>' +
-      '<button class="btn btn-secondary" id="btn-out">→ İşçiyə təhvil</button>' +
-      '<button class="btn btn-outline" id="btn-wo">Zədələnmiş / itmiş</button>' +
+    html += '<div class="alert alert-info">' +
+        'Anbarı işçi idarə edir: yeni gələn bidonları o qeyd edir və özü götürür. ' +
+        'Burada yalnız nə daxil olduqunu və nə qədər çıxdığını görürsünüz.' +
       '</div>';
 
     var workerRows = (s.workers || []).map(function (w) {
@@ -880,82 +891,6 @@
       txRows, 'Hələ əməliyyat yoxdur.'), true);
 
     view.innerHTML = html;
-
-    $('#btn-in').addEventListener('click', function () {
-      openModal('Anbara qəbul',
-        moneyField('s-count', 'Bidon sayı', '') +
-        textField('s-note', 'Qeyd (istəyə bağlı)', ''),
-        [
-          { label: 'Ləğv et', kind: 'outline' },
-          { label: 'Qəbul et', kind: 'primary', onClick: function () {
-            return api('POST', '/inventory/stock-in', {
-              bottleCount: parseInt($('#s-count').value, 10) || 0,
-              note: $('#s-note').value.trim() || undefined,
-              idempotencyKey: idem('in'),
-            }).then(function (r) {
-              closeModal();
-              toast('Anbar: ' + r.newBalance + ' bidon.', 'ok');
-              navigate('stock');
-            });
-          } },
-        ]);
-    });
-
-    $('#btn-out').addEventListener('click', function () {
-      var active = (s.workers || []).filter(function (w) { return w.isActive; });
-      if (!active.length) {
-        openModal('İşçiyə təhvil',
-          '<div class="alert alert-error">Hələ aktiv işçi yoxdur. Əvvəlcə "İşçilər" bölməsindən işçi yaradın.</div>',
-          [{ label: 'Bağla', kind: 'primary' }]);
-        return;
-      }
-      openModal('İşçiyə təhvil',
-        '<label class="field"><span class="field-label">İşçi</span><select id="s-worker">' +
-        active.map(function (w) {
-          return '<option value="' + w.workerId + '">' + esc(w.workerName) + ' (' + w.quantity + ')</option>';
-        }).join('') + '</select></label>' +
-        moneyField('s-count', 'Bidon sayı', '', 'Anbarda ' + s.warehouseQuantity + ' bidon var') +
-        textField('s-note', 'Qeyd (istəyə bağlı)', ''),
-        [
-          { label: 'Ləğv et', kind: 'outline' },
-          { label: 'Təhvil et', kind: 'primary', onClick: function () {
-            return api('POST', '/inventory/issue', {
-              workerId: $('#s-worker').value,
-              bottleCount: parseInt($('#s-count').value, 10) || 0,
-              note: $('#s-note').value.trim() || undefined,
-              idempotencyKey: idem('out'),
-            }).then(function (r) {
-              closeModal();
-              toast('Təhvil edildi. Yeni qalıq: ' + r.newBalance, 'ok');
-              navigate('stock');
-            });
-          } },
-        ]);
-    });
-
-    $('#btn-wo').addEventListener('click', function () {
-      openModal('Zədələnmiş / itmiş',
-        '<label class="field"><span class="field-label">Növ</span><select id="s-type">' +
-        '<option value="DAMAGE">Zədələnmiş</option><option value="LOSS">İtmiş</option>' +
-        '</select></label>' +
-        moneyField('s-count', 'Bidon sayı', '') +
-        textField('s-note', 'Səbəb', ''),
-        [
-          { label: 'Ləğv et', kind: 'outline' },
-          { label: 'Qeydə al', kind: 'primary', onClick: function () {
-            return api('POST', '/inventory/write-off', {
-              type: $('#s-type').value,
-              bottleCount: parseInt($('#s-count').value, 10) || 0,
-              note: $('#s-note').value.trim(),
-              idempotencyKey: idem('wo'),
-            }).then(function (r) {
-              closeModal();
-              toast('Qeydə alındı. Yeni qalıq: ' + r.newBalance, 'ok');
-              navigate('stock');
-            });
-          } },
-        ]);
-    });
   }
 
   // --------------------------------------------------------- customers --

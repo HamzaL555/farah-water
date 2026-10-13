@@ -326,28 +326,53 @@ describe('role separation', () => {
     }
   });
 
-  it('lets a worker record bottles arriving, but keeps issuing admin-only', async () => {
-    // Workers physically count what arrives, so INBOUND is open to them.
+  it('runs the warehouse from the worker: inbound in, take out, both attributed', async () => {
+    // The worker counts what arrives and takes what they need. Both rows must
+    // name them.
     const inbound = await api
       .post('/api/v1/inventory/stock-in')
       .set(auth(fx.worker!.token))
       .send({ bottleCount: 100, note: 'Sayım' });
     expect(inbound.statusCode).toBe(201);
 
-    // Handing stock to another worker stays an admin responsibility.
-    const issue = await api
+    const take = await api
+      .post('/api/v1/inventory/issue')
+      .set(auth(fx.worker!.token))
+      .send({ bottleCount: 10 });
+    expect(take.statusCode).toBe(201);
+
+    // A worker cannot move stock into anyone else's hands. The endpoint takes no
+    // workerId, and one sent anyway is stripped - so the bottles still land in
+    // the caller's own hands, which is the guarantee that matters.
+    const cross = await api
       .post('/api/v1/inventory/issue')
       .set(auth(fx.worker!.token))
       .send({ workerId: fx.worker2!.id, bottleCount: 10 });
-    expect(issue.statusCode).toBe(403);
+    expect(cross.statusCode).toBe(201);
+    expect(cross.body.data.newBalance, 'the forged workerId must be ignored').toBe(20);
 
-    // And the warehouse ledger must attribute the entry to the worker.
     const ledger = await api.get('/api/v1/inventory/transactions?pageSize=50').set(auth(fx.admin!.token));
-    const entry = ledger.body.data.items.find(
-      (t: { createdById: string; type: string }) => t.createdById === fx.worker!.id && t.type === 'INBOUND',
+    const mine = ledger.body.data.items.filter(
+      (t: { createdById: string }) => t.createdById === fx.worker!.id,
     );
-    expect(entry?.createdByRole, 'the warehouse ledger must attribute the entry').toBe('WORKER');
-    expect(entry?.createdByName, 'and must show who recorded it').toBeTruthy();
+    const types = mine.map((t: { type: string }) => t.type);
+    expect(types, 'the worker recorded the inbound').toContain('INBOUND');
+    expect(types, 'the worker took the stock').toContain('ISSUE_TO_WORKER');
+    // An ISSUE writes two legs - the worker's and the warehouse's - so the
+    // count is two, not one. What matters is that both name the worker.
+    expect(mine.every((t: { createdByRole: string }) => t.createdByRole === 'WORKER')).toBe(true);
+    expect(mine.every((t: { createdByName: string | null }) => Boolean(t.createdByName))).toBe(true);
+
+    // The admin supervises and writes nothing.
+    for (const [path, body] of [
+      ['/stock-in', { bottleCount: 5 }],
+      ['/issue', { bottleCount: 5 }],
+      ['/return', { bottleCount: 5 }],
+      ['/write-off', { type: 'LOSS', bottleCount: 5, note: 'x' }],
+    ] as const) {
+      const res = await api.post(`/api/v1/inventory${path}`).set(auth(fx.admin!.token)).send(body);
+      expect(res.statusCode, `admin must not be able to ${path}`).toBe(403);
+    }
   });
 
   it('lists every worker account for the admin handover picker', async () => {
@@ -371,7 +396,8 @@ describe('role separation', () => {
   it('allows an admin to see all deliveries', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
-    await issueStock(fx.admin!.token, fx.worker2!.id, 50);
+    // worker2 takes from the warehouse themselves - nobody hands out stock.
+    await api.post('/api/v1/inventory/issue').set(auth(fx.worker2!.token)).send({ bottleCount: 50 });
     await makeDelivery(fx.worker!.token, { customerName: 'Cust A', address: 'Addr A' });
     await makeDelivery(fx.worker2!.token, { customerName: 'Cust B', address: 'Addr B' });
 

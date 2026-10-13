@@ -178,8 +178,12 @@ export const stockInSchema = z.object({
   idempotencyKey: z.string().min(8).max(100).optional(),
 });
 
-export const issueToWorkerSchema = z.object({
-  workerId: z.string().uuid(),
+/**
+ * Taking stock out of the warehouse. No `workerId`: a worker can only move
+ * bottles into their own hands, and the admin cannot do this at all, so there
+ * is nobody for the field to name.
+ */
+export const takeFromWarehouseSchema = z.object({
   bottleCount,
   note: z.string().trim().max(500).optional(),
   idempotencyKey: z.string().min(8).max(100).optional(),

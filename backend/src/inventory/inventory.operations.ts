@@ -91,32 +91,52 @@ export async function receiveStock(bottleCount: number, note: string | null, act
   return moveStock({ type: InventoryTxType.INBOUND, bottleCount, note, reference }, actor, req);
 }
 
-export async function issueToWorker(workerId: string, bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  if (actor.role !== Role.ADMIN) throw forbidden('Yalnız administrator işçiyə bidon təhvil verə bilər.');
-  const worker = await prisma.user.findUnique({ where: { id: workerId }, select: { id: true, isActive: true, fullName: true } });
-  if (!worker) throw notFound('İşçi tapılmadı.');
-  if (!worker.isActive) throw badRequest('Bu işçinin hesabı deaktivdir.');
-  return moveStock({ type: InventoryTxType.ISSUE_TO_WORKER, bottleCount, workerId, note, reference }, actor, req);
-}
-
-export async function returnToStock(bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  // A worker may only hand back stock from their own hands.
-  if (actor.role !== Role.ADMIN) {
-    return moveStock({ type: InventoryTxType.RETURN_TO_STOCK, bottleCount, workerId: actor.id, note, reference }, actor, req);
+/**
+ * Takes bottles out of the warehouse into the caller's own hands.
+ *
+ * WORKER ONLY, and always into the actor's own bucket. The owner asked that the
+ * warehouse be run by the driver who physically receives and uses the stock,
+ * with the admin watching the totals rather than dispensing. Accepting a
+ * workerId would put that choice back in someone's hands; a worker can only
+ * ever move stock to themselves, so the field is not taken at all.
+ */
+export async function takeFromWarehouse(
+  bottleCount: number,
+  note: string | null,
+  actor: Actor,
+  req?: never,
+  reference?: string,
+) {
+  if (actor.role === Role.ADMIN) {
+    throw forbidden('Anbardan bidon götürmək işçinin özündədir. Administrator yalnız baxır.');
   }
-  throw forbidden('Administrator üçün işçi seçilib.');
+  return moveStock(
+    { type: InventoryTxType.ISSUE_TO_WORKER, bottleCount, workerId: actor.id, note, reference },
+    actor,
+    req,
+  );
 }
 
-export async function returnWorkerStock(workerId: string, bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  if (actor.role !== Role.ADMIN) throw forbidden('Yalnız administrator istənilən işçinin qaytarılmasını qeyd edə bilər.');
-  return moveStock({ type: InventoryTxType.RETURN_TO_STOCK, bottleCount, workerId, note, reference }, actor, req);
+/**
+ * Returns stock from the caller's own hands back into the warehouse.
+ *
+ * The warehouse is the worker's to run; the admin watches it. That is a
+ * deliberate choice by the owner, and it has a cost worth stating: a figure
+ * entered wrongly by a worker can only be corrected by that same worker. The
+ * audit log records who entered it, so a mistake is visible and attributable -
+ * but the fix has to come from the driver.
+ */
+export async function returnToStock(bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
+  if (actor.role === Role.ADMIN) {
+    throw forbidden('Anbarı işçi idarə edir. Administrator yalnız baxır.');
+  }
+  return moveStock({ type: InventoryTxType.RETURN_TO_STOCK, bottleCount, workerId: actor.id, note, reference }, actor, req);
 }
 
 export async function reportDamageOrLoss(
   type: InventoryTxType,
   bottleCount: number,
   note: string | null,
-  workerId: string | null,
   actor: Actor,
   req?: never,
   reference?: string,
@@ -125,10 +145,12 @@ export async function reportDamageOrLoss(
   if (type !== InventoryTxType.DAMAGE && type !== InventoryTxType.LOSS) {
     throw badRequest('Yalnız zədələnmiş və ya itmiş bidon qeydə alına bilər.');
   }
-  // Workers can only write off stock from their own hands; warehouse write-offs
-  // are an admin responsibility.
-  const targetWorker = actor.role === Role.ADMIN ? workerId : actor.id;
-  return moveStock({ type, bottleCount, workerId: targetWorker, note, reference }, actor, req);
+  // Workers write off stock from their own hands. The admin does not: with the
+  // warehouse run by the worker, the admin watching is the whole of the role.
+  if (actor.role === Role.ADMIN) {
+    throw forbidden('Anbarı işçi idarə edir. Administrator yalnız baxır.');
+  }
+  return moveStock({ type, bottleCount, workerId: actor.id, note, reference }, actor, req);
 }
 
 // ------------------------------- reporting ---------------------------------
