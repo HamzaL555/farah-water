@@ -116,7 +116,9 @@
 
   var TX_LABEL = {
     INBOUND: 'Anbara qəbul',
-    ISSUE_TO_WORKER: 'İşçiyə təhvil',
+    // The worker takes stock for themselves out of the warehouse; nobody
+    // hands it to them. The old label described a step that no longer exists.
+    ISSUE_TO_WORKER: 'Anbardan götürdü',
     OUT_DELIVERY: 'Çatdırıldı',
     RETURN_TO_STOCK: 'Anbara qaytarıldı',
     DAMAGE: 'Zədələnmiş',
@@ -850,7 +852,7 @@
     // Read-only: the worker receives, takes and returns stock; the admin watches
     // what came in and how much went out.
     var html = '<div class="cards">' +
-      card('Anbarda', s.warehouseQuantity || 0) +
+      card('Anbarda qalan', s.warehouseQuantity || 0, 'good') +
       card('İşçilərdə', s.inWorkersHands || 0) +
       card('Sistemdə cəmi', s.totalSystemQuantity || 0) +
       card('Bu gün daxil', s.todayInbound || 0, 'good') +
@@ -861,7 +863,7 @@
 
     html += '<div class="alert alert-info">' +
         'Anbarı işçi idarə edir: yeni gələn bidonları o qeyd edir və özü götürür. ' +
-        'Burada yalnız nə daxil olduqunu və nə qədər çıxdığını görürsünüz.' +
+        'Burada hər götürmənin kim tərəfindən və nə qədər edildiyi görünür.' +
       '</div>';
 
     var workerRows = (s.workers || []).map(function (w) {
@@ -869,16 +871,24 @@
         w.isActive ? '' : '<span class="badge badge-muted">deaktiv</span>',
         w.quantity === 0 ? '<span class="badge badge-unpaid">0</span>' : String(w.quantity)];
     });
-    html += panel('İşçilərin əlində', '', table(
-      [{ label: 'Ad' }, { label: 'İstifadəçi adı' }, { label: 'Vəziyyət' }, { label: 'Bidon', num: true }],
+    html += panel('İşçilərin əlində — indi nə qədər qalıb', '', table(
+      [{ label: 'Ad' }, { label: 'İstifadəçi adı' }, { label: 'Vəziyyət' }, { label: 'Qalan bidon', num: true }],
       workerRows, 'Hələ heç bir işçi yoxdur.'), true);
 
+    // A take writes two legs - one out of the warehouse, one into the worker's
+    // hands - and both carry the same actor. Naming the worker in the row is
+    // what makes "who took what" answerable without reading the ledger.
     var txRows = (t.items || []).map(function (x) {
-      var by = x.createdByName
-        ? esc(x.createdByName) + (x.createdByRole === 'WORKER' ? ' <span class="badge badge-muted">işçi</span>' : '')
-        : '—';
+      var who = x.workerName || x.createdByName || '—';
+      var by = esc(who) + (x.createdByRole === 'WORKER' ? ' <span class="badge badge-muted">işçi</span>' : '');
+      var movement = esc(TX_LABEL[x.type] || x.type);
+      if (x.type === 'ISSUE_TO_WORKER' && x.balanceKey === 'WAREHOUSE') {
+        movement = 'Anbardan çıxdı';
+      } else if (x.type === 'ISSUE_TO_WORKER') {
+        movement = 'İşçiyə düşdü';
+      }
       return [
-        esc(TX_LABEL[x.type] || x.type),
+        movement,
         '<span class="' + (x.signedCount > 0 ? 'badge badge-paid' : 'badge badge-unpaid') + '">' +
           (x.signedCount > 0 ? '+' : '') + x.signedCount + '</span>',
         dateTime(x.occurredAt),
@@ -886,8 +896,8 @@
         esc(x.note || '—'),
       ];
     });
-    html += panel('İnventar tarixçəsi', '', table(
-      [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Kim yazdı' }, { label: 'Qeyd' }],
+    html += panel('Kim nə qədər götürdü / qaytardı', '', table(
+      [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Kim' }, { label: 'Qeyd' }],
       txRows, 'Hələ əməliyyat yoxdur.'), true);
 
     view.innerHTML = html;

@@ -98,11 +98,15 @@ const WorkerTabs: React.FC = () => (
         tabBarIcon: ({ focused, color }) => <TabIcon name="alert-circle" color={color} focused={focused} />,
       }}
     />
+    {/* The worker runs the warehouse from here: receives, takes, returns.
+        Titled "Anbar" so it is the same panel the admin watches, not a
+        separate private count. */}
     <WorkerTab.Screen
       name="Bottles"
       component={BottlesScreen}
       options={{
-        title: 'Bidonlar',
+        title: 'Anbar',
+        tabBarLabel: 'Anbar',
         tabBarIcon: ({ focused, color }) => <TabIcon name="bottle-soda-outline" color={color} focused={focused} />,
       }}
     />

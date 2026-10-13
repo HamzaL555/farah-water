@@ -71,7 +71,9 @@ export const METHOD_LABEL: Record<PaymentMethod, string> = {
 
 export const INVENTORY_TYPE_LABEL: Record<InventoryTxType, string> = {
   INBOUND: 'Anbara daxil',
-  ISSUE_TO_WORKER: 'İşçiyə təhvil',
+  // The worker takes stock for themselves out of the warehouse; nobody hands
+  // it to them.
+  ISSUE_TO_WORKER: 'Anbardan götürdü',
   OUT_DELIVERY: 'Çatdırılma',
   RETURN_TO_STOCK: 'Anbara qaytarıldı',
   DAMAGE: 'Zədələnmiş',

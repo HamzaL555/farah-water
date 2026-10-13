@@ -59,7 +59,7 @@ export const WarehouseScreen: React.FC = () => {
         <Text style={styles.subtitle}>İşçilər qeyd edir, siz baxırsınız</Text>
 
         <View style={styles.row}>
-          <StatCard label="Anbarda" value={String(summary?.warehouseQuantity ?? 0)} icon="🏭" accent={colors.primary} />
+          <StatCard label="Anbarda qalan" value={String(summary?.warehouseQuantity ?? 0)} icon="🏭" accent={colors.primary} />
           <StatCard
             label="İşçilərdə"
             value={String(summary?.inWorkersHands ?? 0)}
@@ -106,11 +106,12 @@ export const WarehouseScreen: React.FC = () => {
 
         <Text style={styles.hint}>
           Yeni gələn bidonları işçi öz telefonundan qeyd edir və anbardan özü götürür.
+          {'\n'}Aşağıda kim nə qədər götürdü və indi nə qədər qalıb.
         </Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <SectionCard title="İşçilərin əlində" subtitle="Hər işçinin bidon sayı">
+        <SectionCard title="İşçilərin əlində" subtitle="Hər işçinin indi nə qədər bidonu var">
           {!summary || summary.workers.length === 0 ? (
             <EmptyState icon="👷" title="Məlumat yoxdur" message="Hələ heç bir işçi qeydə alınmayıb." />
           ) : (
@@ -131,7 +132,7 @@ export const WarehouseScreen: React.FC = () => {
           )}
         </SectionCard>
 
-        <SectionCard title="İnventar tarixçəsi" subtitle="Son əməliyyatlar">
+        <SectionCard title="Kim nə qədər götürdü" subtitle="Son əməliyyatlar">
           {loading && !history ? (
             <ActivityIndicator />
           ) : !history || history.items.length === 0 ? (
@@ -159,7 +160,7 @@ export const WarehouseScreen: React.FC = () => {
                   <Text style={styles.txTitle}>{INVENTORY_TYPE_LABEL[t.type] ?? t.type}</Text>
                   <Text style={styles.txMeta}>
                     {formatDateTime(t.occurredAt)}
-                    {t.createdByName ? ' · ' + t.createdByName : ''}
+                    {t.workerName ? ' · ' + t.workerName : ''}
                     {t.createdByRole === 'WORKER' ? ' (işçi)' : ''}
                   </Text>
                   {t.note ? <Text style={styles.txNote}>{t.note}</Text> : null}
