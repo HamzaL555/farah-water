@@ -55,6 +55,10 @@ yarn-error.log
 
 # Bundle artifact
 *.jsbundle
+# Android's release bundle. Named index.android.bundle, so the rule above misses
+# it. It is 2 MB of build output that changes on every build and belongs to the
+# APK, not to the history. Path is relative to this file, hence no mobile/ prefix.
+/android/app/src/main/assets/index.android.bundle
 
 # Ruby / CocoaPods
 **/Pods/
