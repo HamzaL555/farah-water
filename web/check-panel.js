@@ -96,12 +96,24 @@ const offsetMatch = /BAKU_OFFSET_MS\s*=\s*4\s*\*\s*3600\s*\*\s*1000/.test(js);
 const dateBody = /\n  function date\(v\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
 const dateTimeBody = /\n  function dateTime\(v\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
 const shifted = /\bbaku\(/.test(dateBody) && /\bbaku\(/.test(dateTimeBody);
-const todayBody = /\n  function todayInput\(\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
-const todayShifted = /BAKU_OFFSET_MS/.test(todayBody);
-console.log(`\nbaku time: offset ${offsetMatch ? 'ok' : 'MISSING'}, date/dateTime ${shifted ? 'ok' : 'READ UTC DIRECTLY'}, todayInput ${todayShifted ? 'ok' : 'MISSING'}`);
+// The delivery date field is built from dayOffsetIso, so that is the one that
+// has to carry the offset: "Bu gün" means today in Baku, not on the viewer's
+// machine clock.
+const dayBody = /function dayOffsetIso\(days\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
+const dayShifted = /BAKU_OFFSET_MS/.test(dayBody);
+console.log(`\nbaku time: offset ${offsetMatch ? 'ok' : 'MISSING'}, date/dateTime ${shifted ? 'ok' : 'READ UTC DIRECTLY'}, dayOffsetIso ${dayShifted ? 'ok' : 'MISSING'}`);
+
+// The native date input rendered 10/14/2026 on an en-US browser - month first,
+// the opposite of every other date here. DD.MM.YYYY is the format, and the
+// panel must be the one that parses it.
+const parsesAz =
+  /function parseAzerbaijaniDate\(/.test(js) &&
+  /placeholder="GG\.AA\.İLİ"/.test(js) &&
+  /function dayRelativeName\(/.test(js);
+console.log(`delivery date: DD.MM.YYYY parser ${parsesAz ? 'ok' : 'MISSING'}`);
 
 const failed =
   !syntaxOk || missing.length > 0 || unrouted.length > 0 || unwired.length > 0 || unstyled.length > 0 ||
-  !offsetMatch || !shifted || !todayShifted;
+  !offsetMatch || !shifted || !dayShifted || !parsesAz;
 console.log(`\n${failed ? 'ISSUES FOUND' : 'PANEL OK'}`);
 process.exit(failed ? 1 : 0);

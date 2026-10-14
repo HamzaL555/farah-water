@@ -183,6 +183,11 @@ input:focus, select:focus, textarea:focus {
 .btn-block { width: 100%; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 
+/* A row of small tappable choices - "Bu gün / Dünən / Əvvəlki gün". Wraps on a
+   phone, and the chosen one is filled so the current value is never a guess. */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip-row .btn.is-on { background: var(--primary); border-color: var(--primary); color: #fff; }
+
 /* ----------------------------------------------------------- shell ---- */
 .shell { display: flex; min-height: 100vh; }
 .sidebar {

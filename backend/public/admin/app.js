@@ -95,9 +95,48 @@
            String(d.getUTCMinutes()).padStart(2, '0');
   }
 
-  /** Today as YYYY-MM-DD, on the Baku calendar day (UTC+4). */
-  function todayInput() {
-    return new Date(Date.now() + BAKU_OFFSET_MS).toISOString().slice(0, 10);
+  var DAY_NAMES = ['Bazar', 'Bazar ertəsi', 'Çərşənbə axşamı', 'Çərşənbə', 'Cümə axşamı', 'Cümə', 'Şənbə'];
+
+  /**
+   * YYYY-MM-DD for the Baku day `days` away from today (0 = today, -1 = yesterday).
+   *
+   * Every Baku day is exactly 24 hours long because the offset has no daylight
+   * saving, so stepping 86400000 ms moves exactly one calendar day.
+   */
+  function dayOffsetIso(days) {
+    return new Date(Date.now() + BAKU_OFFSET_MS + days * 86400000).toISOString().slice(0, 10);
+  }
+
+  /** "Bu gün" / "Dünən" / the weekday, whichever reads best for that day. */
+  function dayRelativeName(iso) {
+    if (iso === dayOffsetIso(0)) return 'Bu gün';
+    if (iso === dayOffsetIso(-1)) return 'Dünən';
+    return DAY_NAMES[new Date(iso + 'T00:00:00Z').getUTCDay()] || iso;
+  }
+
+  /**
+   * Accepts DD.MM.YYYY and returns YYYY-MM-DD, or '' if it is not a real date.
+   *
+   * The native date input was showing 10/14/2026 because the browser was set
+   * to en-US: it renders month first, which is the opposite of how every other
+   * date in this system reads, and "14 October" typed as "10/14" is a month
+   * that does not exist. The format is ours to fix; the browser's is not.
+   */
+  function parseAzerbaijaniDate(text) {
+    var raw = String(text || '').trim();
+    if (!raw) return '';
+    var m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(raw);
+    var day, mon, year;
+    if (m) {
+      day = +m[1]; mon = +m[2]; year = +m[3];
+    } else {
+      var m2 = /^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/.exec(raw);
+      if (!m2) return '';
+      year = +m2[1]; mon = +m2[2]; day = +m2[3];
+    }
+    if (mon < 1 || mon > 12 || day < 1 || year < 2000 || year > 2100) return '';
+    if (day > new Date(Date.UTC(year, mon, 0)).getUTCDate()) return '';
+    return year + '-' + String(mon).padStart(2, '0') + '-' + String(day).padStart(2, '0');
   }
 
   function moneyInput(v) {
@@ -479,6 +518,36 @@
       '<input id="' + id + '" type="' + (opts.type || 'text') + '" ' +
       (opts.multiline ? 'rows="3"' : '') + ' value="' + esc(value === null || value === undefined ? '' : value) + '" />' +
       '</label>';
+  }
+
+  /**
+   * The delivery date, as one tap for today and DD.MM.YYYY for anything else.
+   *
+   * A delivery is recorded the day it happens, so today is the answer nearly
+   * every time and it should not be typed. Three buttons cover the case that
+   * actually turns up - a round that finished late, a phone that was out of
+   * credit - and the text field underneath takes any other day in the same
+   * format every other date in this system uses.
+   */
+  function dateField() {
+    var recent = [0, -1, -2];
+    var chips = recent.map(function (n) {
+      var iso = dayOffsetIso(n);
+      return '<button type="button" class="btn btn-outline btn-sm" data-day="' + iso + '">' +
+        esc(dayRelativeName(iso)) + '</button>';
+    }).join('');
+    return '<div class="field">' +
+      '<span class="field-label">Çatdırılma tarixi</span>' +
+      '<div class="chip-row" id="n-day-chips">' + chips + '</div>' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+        '<input id="n-date" type="text" inputmode="numeric" placeholder="GG.AA.İLİ" ' +
+        'maxlength="10" value="' + date(dayOffsetIso(0)) + '" style="flex:1" />' +
+        '<button type="button" class="btn btn-outline" id="n-cal-btn" title="Təqvimdən seç" style="padding:7px 11px;font-size:15px;line-height:1">📅</button>' +
+        '<input id="n-date-picker" type="date" max="' + dayOffsetIso(0) + '" value="' + dayOffsetIso(0) + '" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none" />' +
+      '</div>' +
+      '<span class="field-label" id="n-date-note" style="margin-top:4px">' +
+      'Bu gün: ' + esc(date(dayOffsetIso(0))) + '</span>' +
+      '</div>';
   }
 
   // ==================================================== live refresh =====
@@ -1247,7 +1316,7 @@ function newDeliveryForm() {
       '</div>' +
 
       moneyField('n-count', 'Bidon sayı', '') +
-      textField('n-date', 'Tarix', todayInput(), { type: 'date' }),
+      dateField(),
       [
         { label: 'Ləğv et', kind: 'outline' },
         { label: 'Yadda saxla', kind: 'primary', onClick: function () {
@@ -1267,6 +1336,13 @@ function newDeliveryForm() {
           // the company itself.
           var picked = dest === 'COMPANY' ? '' : $('#n-picked').dataset.id;
 
+          // The field reads DD.MM.YYYY. An empty or impossible one is refused
+          // here rather than sent on, because a delivery filed under a month that
+          // does not exist is worse than no delivery.
+          var day = parseAzerbaijaniDate($('#n-date').value);
+          if (!day) throw new Error('Tarix GG.AA.İLİ formatında yazılmalıdır (məsələn ' + date(dayOffsetIso(0)) + ').');
+          if (day > dayOffsetIso(0)) throw new Error('Çatdırılma tarixi gələcəkdə ola bilməz.');
+
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
             customerName: dest === 'COMPANY'
@@ -1278,7 +1354,7 @@ function newDeliveryForm() {
             officeId: dest === 'COMPANY' ? $('#n-office').value : undefined,
             address: dest === 'HOME' ? $('#n-addr').value.trim() : undefined,
             bottleCount: count,
-            deliveredAt: $('#n-date').value + 'T12:00:00.000Z',
+            deliveredAt: day + 'T12:00:00.000Z',
             idempotencyKey: idem('d'),
           }).then(function () {
             closeModal();
@@ -1310,6 +1386,47 @@ function newDeliveryForm() {
     $('#n-company').addEventListener('change', function () {
       $('#n-office').innerHTML = officeOptions(this.value);
     });
+
+    // One tap for today, or for either of the two days before it. The chosen
+    // button is filled, so the date on screen is never a guess.
+    function setDay(iso) {
+      $('#n-date').value = date(iso);
+      if ($('#n-date-picker')) $('#n-date-picker').value = iso;
+      $$('#n-day-chips .btn').forEach(function (x) {
+        x.classList.toggle('is-on', x.dataset.day === iso);
+      });
+      $('#n-date-note').textContent = iso === dayOffsetIso(0)
+        ? 'Bu gün'
+        : dayRelativeName(iso) + ' · ' + date(iso);
+    }
+    $('#n-day-chips').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-day]');
+      if (!b) return;
+      setDay(b.dataset.day);
+    });
+    $('#n-cal-btn').addEventListener('click', function () {
+      var picker = $('#n-date-picker');
+      if (!picker) return;
+      if (typeof picker.showPicker === 'function') {
+        picker.showPicker();
+      } else {
+        picker.focus();
+      }
+    });
+    $('#n-date-picker').addEventListener('change', function () {
+      if (this.value) setDay(this.value);
+    });
+    $('#n-date').addEventListener('input', function () {
+      var iso = parseAzerbaijaniDate(this.value);
+      if (iso && $('#n-date-picker')) $('#n-date-picker').value = iso;
+      $$('#n-day-chips .btn').forEach(function (x) {
+        x.classList.toggle('is-on', iso !== '' && x.dataset.day === iso);
+      });
+      $('#n-date-note').textContent = iso
+        ? (iso === dayOffsetIso(0) ? 'Bu gün · ' + date(iso) : dayRelativeName(iso) + ' · ' + date(iso))
+        : 'GG.AA.İLİ formatında yaz';
+    });
+    setDay(dayOffsetIso(0));
 
     var timer = null;
     $('#n-search').addEventListener('input', function (e) {
