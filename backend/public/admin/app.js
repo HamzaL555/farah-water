@@ -61,11 +61,27 @@
     return money(v) + ' AZN';
   }
 
+  /**
+   * Baku local time (UTC+4), which has no daylight saving.
+   *
+   * The offset is applied to the instant and the UTC parts are then read. The
+   * server does the same thing for its own exports, and both have to agree: a
+   * delivery recorded at 14:00 in Baku reads as 14:00 here whatever the viewer's
+   * machine clock says, and 10:00 if the offset is forgotten.
+   */
+  var BAKU_OFFSET_MS = 4 * 3600 * 1000;
+
+  function baku(v) {
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return null;
+    return new Date(d.getTime() + BAKU_OFFSET_MS);
+  }
+
   /** Dates render as DD.MM.YYYY in Baku local time (UTC+4). */
   function date(v) {
     if (!v) return '—';
-    var d = new Date(v);
-    if (isNaN(d.getTime())) return '—';
+    var d = baku(v);
+    if (!d) return '—';
     return String(d.getUTCDate()).padStart(2, '0') + '.' +
            String(d.getUTCMonth() + 1).padStart(2, '0') + '.' +
            d.getUTCFullYear();
@@ -73,16 +89,15 @@
 
   function dateTime(v) {
     if (!v) return '—';
-    var d = new Date(v);
-    if (isNaN(d.getTime())) return '—';
+    var d = baku(v);
+    if (!d) return '—';
     return date(v) + ' ' + String(d.getUTCHours()).padStart(2, '0') + ':' +
            String(d.getUTCMinutes()).padStart(2, '0');
   }
 
-  /** Today as YYYY-MM-DD for date inputs (UTC+4 calendar day). */
+  /** Today as YYYY-MM-DD, on the Baku calendar day (UTC+4). */
   function todayInput() {
-    var now = new Date(Date.now() + 4 * 3600 * 1000);
-    return now.toISOString().slice(0, 10);
+    return new Date(Date.now() + BAKU_OFFSET_MS).toISOString().slice(0, 10);
   }
 
   function moneyInput(v) {
@@ -1095,12 +1110,11 @@
         ' · Ödənilən: <strong>' + money(d.paidAmount) + ' AZN</strong></div>' +
       moneyField('e-price', 'Bir bidonun qiyməti', String(d.unitPrice ?? '0')) +
       moneyField('e-paid', 'Ödənilən məbləğ', String(d.paidAmount ?? '0'), '0 yazsanız tam ödənməmiş qalır') +
-      textField('e-reason', 'Səbəb', '', {}),
+      textField('e-reason', 'Səbəb (istəyə bağlı)', '', {}),
       [
         { label: 'Ləğv et', kind: 'outline' },
         { label: 'Yadda saxla', kind: 'primary', onClick: function () {
           var reason = $('#e-reason').value.trim();
-          if (reason.length < 3) throw new Error('Düzəliş səbəbi yazılmalıdır (ən azı 3 simvol).');
           var price = $('#e-price').value.trim();
           var paid = $('#e-paid').value.trim() || '0';
           if (parseFloat(paid) < 0) throw new Error('Ödənilən məbləğ negatif ola bilməz.');
@@ -1223,12 +1237,14 @@ function newDeliveryForm() {
         '<input id="n-addr" placeholder="Məsələn: Bakı, Xəzər prospekti 12" /></label>' +
 
       // The customer is looked up the same way for both destinations.
-      '<label class="field"><span class="field-label">Müştəri (ad və ya telefon)</span>' +
+      '<div id="n-customer-wrap">' +
+        '<label class="field"><span class="field-label">Müştəri (ad və ya telefon)</span>' +
         '<input id="n-search" placeholder="Axtar…" /></label>' +
-      '<div id="n-results" class="small"></div>' +
-      '<div id="n-picked" class="alert alert-ok" hidden></div>' +
-      '<label class="field" id="n-manual-wrap"><span class="field-label">Və ya yeni müştəri adı</span>' +
+        '<div id="n-results" class="small"></div>' +
+        '<div id="n-picked" class="alert alert-ok" hidden></div>' +
+        '<label class="field" id="n-manual-wrap"><span class="field-label">Və ya yeni müştəri adı</span>' +
         '<input id="n-name" /></label>' +
+      '</div>' +
 
       moneyField('n-count', 'Bidon sayı', '') +
       '<div class="alert alert-info" id="n-price-note" hidden></div>' +
@@ -1238,7 +1254,6 @@ function newDeliveryForm() {
         { label: 'Yadda saxla', kind: 'primary', onClick: function () {
           var count = parseInt($('#n-count').value, 10) || 0;
           if (!count || count < 1) throw new Error('Bidon sayı ən azı 1 olmalıdır.');
-          var picked = $('#n-picked').dataset.id;
 
           if (dest === 'COMPANY') {
             if (!$('#n-company').value || !$('#n-office').value) {
@@ -1248,9 +1263,16 @@ function newDeliveryForm() {
             throw new Error('Evə çatdırılmada ünvan yazılmalıdır.');
           }
 
+          // A company delivery names the company, not a person, so there is no
+          // customer field to send and none is required. The server attaches
+          // the company itself.
+          var picked = dest === 'COMPANY' ? '' : $('#n-picked').dataset.id;
+
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
-            customerName: picked ? undefined : $('#n-name').value.trim(),
+            customerName: dest === 'COMPANY'
+              ? undefined
+              : (picked ? undefined : $('#n-name').value.trim()),
             waterType: currentWater(),
             destinationType: dest,
             companyId: dest === 'COMPANY' ? $('#n-company').value : undefined,
@@ -1282,6 +1304,9 @@ function newDeliveryForm() {
       dest = b.dataset.v;
       $('#n-company-wrap').hidden = dest !== 'COMPANY';
       $('#n-addr-wrap').hidden = dest !== 'HOME';
+      // A company delivery names a company, not a person. Showing a customer
+      // picker there would invite a name that contradicts the office.
+      $('#n-customer-wrap').hidden = dest === 'COMPANY';
       showPriceNote();
     });
 
@@ -1395,7 +1420,7 @@ function newDeliveryForm() {
           '<div class="alert alert-info">' + esc(row.customerName) + ' · qalıq borc ' +
             '<strong>' + money(row.debtAmount) + ' AZN</strong></div>' +
           moneyField('a-amount', 'Güzəş məbləği', String(row.debtAmount), 'Düzəliş gəlir sayılmır — yalnız ödəniş gəlirdir') +
-          textField('a-note', 'Səbəb', ''),
+          textField('a-note', 'Səbəb (istəyə bağlı)', ''),
           [
             { label: 'Ləğv et', kind: 'outline' },
             { label: 'Təsdiqlə', kind: 'primary', onClick: function () {

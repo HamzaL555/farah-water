@@ -11,7 +11,8 @@ export interface CreateAdjustmentInput {
   deliveryId: string;
   type: DebtAdjustmentType;
   amount: string | number;
-  reason: string;
+  /** Optional. The ledger attributes the adjustment without it. */
+  reason?: string;
 }
 
 /**
@@ -25,7 +26,10 @@ export async function createAdjustment(input: CreateAdjustmentInput, actor: Acto
   if (actor.role !== Role.ADMIN) {
     throw forbidden('Borc düzəlişini yalnız administrator edə bilər.');
   }
-  if (!input.reason?.trim()) throw badRequest('Düzəliş səbəbi yazılmalıdır.');
+  // The reason is optional. A blank one is recorded as a blank one: the audit
+  // trail already says who adjusted the debt, by how much and when, and an
+  // invented excuse is worse than none.
+  const reason = input.reason?.trim() ?? '';
 
   const amount = round2(new Prisma.Decimal(input.amount ?? 0));
   if (!amount.greaterThan(0)) throw badRequest('Məbləğ sıfırdan böyük olmalıdır.');
@@ -50,7 +54,7 @@ export async function createAdjustment(input: CreateAdjustmentInput, actor: Acto
         deliveryId: delivery.id,
         type: input.type,
         amount,
-        reason: input.reason.trim(),
+        reason,
         createdById: actor.id,
       },
       include: { createdBy: { select: { id: true, fullName: true } } },
@@ -67,7 +71,7 @@ export async function createAdjustment(input: CreateAdjustmentInput, actor: Acto
     entityType: 'debt_adjustment',
     entityId: adjustment.id,
     after: serializeDebtAdjustment(adjustment),
-    meta: { deliveryId: delivery.id, type: input.type, amount: amount.toFixed(2), reason: input.reason },
+    meta: { deliveryId: delivery.id, type: input.type, amount: amount.toFixed(2), reason: reason || null },
     req,
   });
 

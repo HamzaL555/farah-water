@@ -113,6 +113,7 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
   let companyId: string | null = null;
   let officeId: string | null = null;
   let address: string;
+  let company: { id: string; name: string; filteredPrice: Prisma.Decimal; springPrice: Prisma.Decimal } | null = null;
 
   if (destinationType === DestinationType.COMPANY) {
     if (!input.companyId || !input.officeId) {
@@ -131,22 +132,18 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
     companyId = office.company.id;
     officeId = office.id;
     address = `${office.company.name} - ${office.name}`;
+    company = office.company;
   } else {
     address = input.address?.trim() ?? '';
     if (address.length < 3) throw badRequest('Evə çatdırılmada ünvan ən azı 3 simvol olmalıdır.');
-  }
-
-  if (!input.customerId && !input.customerName?.trim()) {
-    throw badRequest('Müştərinin adı və ya müştəri seçilməlidir.');
+    // Only a home delivery has a customer to name. For a company the customer
+    // is derived from the company below.
+    if (!input.customerId && !input.customerName?.trim()) {
+      throw badRequest('Müştərinin adı və ya müştəri seçilməlidir.');
+    }
   }
 
   // ---- price: server-decided --------------------------------------------
-  const company = companyId
-    ? await prisma.company.findUnique({
-        where: { id: companyId },
-        select: { filteredPrice: true, springPrice: true },
-      })
-    : null;
   const unitPrice = resolveUnitPrice(destinationType, waterType, company);
 
   // Workers always deliver as themselves; an admin may record on someone's behalf.
@@ -179,6 +176,8 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
         include: {
           customer: { select: { id: true, name: true, phone: true, address: true } },
           worker: { select: { id: true, fullName: true, username: true } },
+          company: { select: { id: true, name: true } },
+          office: { select: { id: true, name: true } },
         },
       });
       return { delivery: serializeDelivery(full as never), duplicate: true };
@@ -186,7 +185,19 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
 
     // ---- resolve customer -------------------------------------------------
     let customerId = input.customerId;
-    if (!customerId) {
+    if (!customerId && destinationType === DestinationType.COMPANY) {
+      // A company delivery names a company, not a person, so the form asks for
+      // no customer at all. Attach the company itself: every report, debt view
+      // and invoice already reads through this relation, and a company drop
+      // still has to appear in them.
+      const companyCustomer = await tx.customer.findFirst({
+        where: { name: { equals: company!.name, mode: 'insensitive' }, address: { equals: address, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      customerId = companyCustomer
+        ? companyCustomer.id
+        : (await tx.customer.create({ data: { name: company!.name, address }, select: { id: true } })).id;
+    } else if (!customerId) {
       const name = input.customerName!.trim();
       const found = await tx.customer.findFirst({
         where: { name: { equals: name, mode: 'insensitive' }, address: { equals: address, mode: 'insensitive' } },
@@ -254,9 +265,23 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
 
     const updated = await recalcDelivery(tx, createdDelivery.id);
 
+    // recalcDelivery returns the bare row. A POST answer should carry the same
+    // shape as a GET: without the relations the caller gets back a delivery with
+    // no customer name and, for a company drop, no office name - the very two
+    // fields it just supplied.
+    const withRelations = await tx.delivery.findUniqueOrThrow({
+      where: { id: updated.id },
+      include: {
+        customer: { select: { id: true, name: true, phone: true, address: true } },
+        worker: { select: { id: true, fullName: true, username: true } },
+        company: { select: { id: true, name: true } },
+        office: { select: { id: true, name: true } },
+      },
+    });
+
     // Serialise inside the transaction so Decimal columns become plain JSON
     // numbers before the row object leaves this scope.
-    return { delivery: serializeDelivery(updated as never), duplicate: false };
+    return { delivery: serializeDelivery(withRelations as never), duplicate: false };
   });
 
   if (!result.duplicate) {
@@ -466,7 +491,8 @@ export async function updateDelivery(
     unitPrice?: string | number;
     /** The money the admin says was actually collected. See below. */
     paidAmount?: string | number;
-    reason: string;
+    /** Optional. The ledger keys the correction; a reason is a courtesy. */
+    reason?: string;
   },
   actor: Actor,
   req?: never,
@@ -561,12 +587,15 @@ export async function updateDelivery(
 
       const existing = await tx.payment.findMany({ where: { deliveryId: id, voidedAt: null } });
       const nowPaid = existing.reduce((sum, p) => sum.plus(p.amount), new Prisma.Decimal(0));
+      // A blank reason is fine; the ledger already says who changed what and
+      // when, and an invented excuse would be worse than none.
+      const reason = patch.reason?.trim() || 'Qiymət / ödəniş düzəlişi';
 
       if (!target.equals(nowPaid)) {
         for (const p of existing) {
           await tx.payment.update({
             where: { id: p.id },
-            data: { voidedAt: new Date(), voidedById: actor.id, voidReason: patch.reason },
+            data: { voidedAt: new Date(), voidedById: actor.id, voidReason: reason },
           });
         }
         if (target.greaterThan(0)) {
@@ -581,7 +610,7 @@ export async function updateDelivery(
               amount: target,
               method: PaymentMethod.CASH,
               paidAt: new Date(),
-              note: `Administrator tərəfindən düzəldildi: ${patch.reason}`,
+              note: `Administrator tərəfindən düzəldildi: ${reason}`,
               recordedById: actor.id,
             },
           });
@@ -601,7 +630,7 @@ export async function updateDelivery(
       entityId: id,
       before: serializeDelivery(before as never),
       after: serialized,
-      meta: { reason: patch.reason, bottleDelta, paidAmountSet: patch.paidAmount },
+      meta: { reason: patch.reason?.trim() || null, bottleDelta, paidAmountSet: patch.paidAmount },
       req,
     });
     return serialized;

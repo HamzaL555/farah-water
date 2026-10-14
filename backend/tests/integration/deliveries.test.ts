@@ -216,6 +216,24 @@ describe('deliveries, payments and debts', () => {
     expect((await listPayments(fx.admin!.token)).body.data.totalAmount).toBe(12);
   });
 
+  it('accepts a debt adjustment with no reason written', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+    const delivery = (await makeDelivery(fx.worker!.token)).body.data;
+
+    // The owner asked for the reason to stop being a condition of the action.
+    // The audit trail already attributes the waiver; demanding prose on top
+    // of that only produced a box people typed one word into.
+    const res = await api
+      .post('/api/v1/debts/adjustments')
+      .set(auth(fx.admin!.token))
+      .send({ deliveryId: delivery.id, type: 'FORGIVE', amount: '20.00', reason: '' });
+    expect(res.statusCode).toBe(201);
+
+    const detail = (await getDelivery(fx.admin!.token, delivery.id)).body.data;
+    expect(detail.debtAmount).toBe(0);
+    expect(detail.status).toBe('PAID');
+  });
   it('refuses a worker trying to adjust debt', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
@@ -536,5 +554,86 @@ describe('input validation', () => {
       .send({ idempotencyKey: key(), deliveryId: delivery.id, amount: '5.00' });
     expect(res.statusCode).toBe(403);
     expect(await prisma.payment.count()).toBe(0);
+  });
+});
+
+/**
+ * A company delivery is addressed by an office, not by a person. The owner asked
+ * for the customer field to disappear there: asking a driver to name a customer
+ * for a drop that goes to "Evrascon - Bakmil" only invites an answer that
+ * contradicts the office the delivery is recorded against.
+ */
+describe('company deliveries name an office, not a customer', () => {
+  const companyName = 'Test Sirket ' + Math.random().toString(36).slice(2, 8);
+
+  const makeCompanyDelivery = async (officeId: string, companyId: string) =>
+    api
+      .post('/api/v1/deliveries')
+      .set(auth(fx.worker!.token))
+      .send({
+        idempotencyKey: key(),
+        // No customerName, no customerId: the point of the change.
+        destinationType: 'COMPANY',
+        companyId,
+        officeId,
+        bottleCount: 4,
+      });
+
+  it('accepts a company delivery with no customer and attaches the company', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+
+    const company = await prisma.company.create({
+      data: { name: companyName, filteredPrice: '2.50', springPrice: '2.00' },
+    });
+    const office = await prisma.office.create({ data: { companyId: company.id, name: 'Test ofis' } });
+
+    const res = await makeCompanyDelivery(office.id, company.id);
+    expect(res.statusCode).toBe(201);
+
+    const d = res.body.data;
+    expect(d.destinationType).toBe('COMPANY');
+    expect(d.companyId).toBe(company.id);
+    expect(d.officeId).toBe(office.id);
+    expect(d.customerName).toBe(companyName);
+    // The company price, decided by the server, not by anything the client sent.
+    expect(Number(d.unitPrice)).toBe(2.5);
+    expect(Number(d.totalAmount)).toBe(10);
+    expect(Number(d.debtAmount)).toBe(10);
+  });
+
+  it('reuses one customer per company office instead of piling up duplicates', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+
+    const company = await prisma.company.create({
+      data: { name: companyName + ' 2', filteredPrice: '2.50', springPrice: '2.00' },
+    });
+    const office = await prisma.office.create({ data: { companyId: company.id, name: 'Test ofis' } });
+
+    await makeCompanyDelivery(office.id, company.id);
+    await makeCompanyDelivery(office.id, company.id);
+
+    const customers = await prisma.customer.count({
+      where: { name: company.name },
+    });
+    expect(customers).toBe(1);
+  });
+
+  it('still refuses a home delivery with no customer', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+
+    const res = await api
+      .post('/api/v1/deliveries')
+      .set(auth(fx.worker!.token))
+      .send({
+        idempotencyKey: key(),
+        destinationType: 'HOME',
+        address: 'Test Street 1',
+        bottleCount: 2,
+      });
+    // It is the company branch that stopped needing a customer.
+    expect(res.statusCode).toBe(422);
   });
 });

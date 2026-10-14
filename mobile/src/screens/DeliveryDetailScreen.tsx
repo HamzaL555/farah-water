@@ -163,13 +163,13 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
         ? 'Ödənilən məbləğ negatif ola bilməz.'
         : priceTouched && paidNum > newTotal
           ? `Ödənilən məbləğ ümumi məbləğdən (${newTotal.toFixed(2)}) çox ola bilməz.`
-          : priceTouched && priceReason.trim().length < 3
-            ? 'Düzəliş səbəbi yazılmalıdır.'
-            : null;
+          : null;
 
   const onSavePrice = async () => {
     setPriceTouched(true);
-    if (priceNum < 0 || paidNum < 0 || paidNum > newTotal || priceReason.trim().length < 3) return;
+    // The reason is optional: the ledger already records who changed what and
+    // when, so the common case stays one tap.
+    if (priceNum < 0 || paidNum < 0 || paidNum > newTotal) return;
     const result = await priceAction.submit();
     if (!result) return;
     setPriceOpen(false);
@@ -203,7 +203,7 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
   };
 
   const onAdjust = async () => {
-    if (!adjustReason.trim() || parseMoneyInput(adjustAmount) <= 0) return;
+    if (parseMoneyInput(adjustAmount) <= 0) return;
     const result = await adjustAction.submit();
     if (!result) return;
     setAdjustOpen(false);
@@ -435,7 +435,7 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
               <Text style={{ fontWeight: '700' }}>{formatMoney(newTotal)}</Text>
             </Text>
             <PaperInput
-              label="Səbəb"
+              label="Səbəb (istəyə bağlı)"
               value={priceReason}
               onChangeText={setPriceReason}
               mode="outlined"
@@ -557,7 +557,7 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
               style={styles.dialogInput}
             />
             <PaperInput
-              label="Səbəb"
+              label="Səbəb (istəyə bağlı)"
               value={adjustReason}
               onChangeText={setAdjustReason}
               mode="outlined"

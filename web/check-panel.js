@@ -85,7 +85,23 @@ console.log(`\nclasses used in html: ${htmlClasses.size}`);
 if (unstyled.length === 0) console.log('every class has a rule in styles.css');
 else console.log('CLASSES WITH NO CSS RULE: ' + unstyled.join(', '));
 
+// 7. Times must be rendered in Baku time.
+//
+//    The bug this guards against is quiet and everywhere: reading the UTC parts
+//    of a timestamp and printing them unshifted prints a delivery recorded at
+//    14:00 as 10:00, on every screen, forever. Both renderers have to go
+//    through the same offset shift, so check that they do and that the offset
+//    is the one Baku actually uses.
+const offsetMatch = /BAKU_OFFSET_MS\s*=\s*4\s*\*\s*3600\s*\*\s*1000/.test(js);
+const dateBody = /\n  function date\(v\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
+const dateTimeBody = /\n  function dateTime\(v\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
+const shifted = /\bbaku\(/.test(dateBody) && /\bbaku\(/.test(dateTimeBody);
+const todayBody = /\n  function todayInput\(\) \{([\s\S]*?)\n  \}/.exec(js)?.[1] ?? '';
+const todayShifted = /BAKU_OFFSET_MS/.test(todayBody);
+console.log(`\nbaku time: offset ${offsetMatch ? 'ok' : 'MISSING'}, date/dateTime ${shifted ? 'ok' : 'READ UTC DIRECTLY'}, todayInput ${todayShifted ? 'ok' : 'MISSING'}`);
+
 const failed =
-  !syntaxOk || missing.length > 0 || unrouted.length > 0 || unwired.length > 0 || unstyled.length > 0;
+  !syntaxOk || missing.length > 0 || unrouted.length > 0 || unwired.length > 0 || unstyled.length > 0 ||
+  !offsetMatch || !shifted || !todayShifted;
 console.log(`\n${failed ? 'ISSUES FOUND' : 'PANEL OK'}`);
 process.exit(failed ? 1 : 0);

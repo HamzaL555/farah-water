@@ -49,10 +49,6 @@ export const createDeliverySchema = z
       .optional(),
     note: z.string().trim().max(1000).optional(),
   })
-  .refine((d) => d.customerId || (d.customerName && d.customerName.length >= 2), {
-    message: 'Müştəri seçilməlidir və ya müştərinin adı yazılmalıdır.',
-    path: ['customerName'],
-  })
   .refine(
     (d) => d.destinationType !== DestinationType.COMPANY || (d.companyId && d.officeId),
     {
@@ -65,6 +61,18 @@ export const createDeliverySchema = z
     {
       message: 'Evə çatdırılmada ünvan ən azı 3 simvol olmalıdır.',
       path: ['address'],
+    },
+  )
+  // A company delivery names a company, not a person, so the customer is
+  // derived from it server-side. Only a home delivery has to name one.
+  .refine(
+    (d) =>
+      d.destinationType === DestinationType.COMPANY ||
+      Boolean(d.customerId) ||
+      (d.customerName && d.customerName.trim().length >= 2),
+    {
+      message: 'Müştəri seçilməlidir və ya müştərinin adı yazılmalıdır.',
+      path: ['customerName'],
     },
   );
 // NOTE: `unitPrice` and `paidAmount` are deliberately absent. A worker records
@@ -103,8 +111,14 @@ export const updateDeliverySchema = z.object({
    * field - "ödenilib" is always recomputed from the payment ledger, so it can
    * never drift from the money that genuinely arrived.
    */
+  /**
+   * Optional. The owner asked for it: recording what was collected is the
+   * point, and a mandatory reason turned the most common action in the app into
+   * a form to think about. `idempotencyKey` still keys the correction, so the
+   * ledger stays auditable without a free-text excuse.
+   */
   paidAmount: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]).optional(),
-  reason: z.string().trim().min(3, 'Düzəliş səbəbi yazılmalıdır.').max(500),
+  reason: z.string().trim().max(500).default(''),
 });
 
 export const cancelDeliverySchema = z.object({
@@ -152,7 +166,10 @@ export const createAdjustmentSchema = z.object({
   deliveryId: z.string().uuid(),
   type: z.nativeEnum(DebtAdjustmentType),
   amount: z.union([z.coerce.number().min(0.01).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]),
-  reason: z.string().trim().min(3, 'Səbəb yazılmalıdır.').max(500),
+  // Optional, like the payment correction. The ledger records who adjusted the
+  // debt, by how much and when; a written explanation is the owner's to give,
+  // not a condition of being allowed to forgive what was collected.
+  reason: z.string().trim().max(500).default(''),
 });
 
 export const listDebtsSchema = z.object({
