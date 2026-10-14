@@ -248,8 +248,17 @@
 
     if (!r.ok) {
       var msg = 'Xəta baş verdi.';
-      if (r.json && r.json.error && r.json.error.message) msg = r.json.error.message;
-      else if (r.text) msg = r.text.slice(0, 200);
+      if (r.json && r.json.error) {
+        if (r.json.error.details && typeof r.json.error.details === 'object') {
+          var dvals = Object.keys(r.json.error.details).map(function (k) { return r.json.error.details[k]; }).filter(Boolean);
+          if (dvals.length) msg = dvals[0];
+          else msg = r.json.error.message || msg;
+        } else {
+          msg = r.json.error.message || msg;
+        }
+      } else if (r.text) {
+        msg = r.text.slice(0, 200);
+      }
       var err = new Error(msg);
       err.status = r.status;
       throw err;
@@ -1327,14 +1336,21 @@ function newDeliveryForm() {
             if (!$('#n-company').value || !$('#n-office').value) {
               throw new Error('Şirkət və ofis seçilməlidir.');
             }
-          } else if ($('#n-addr').value.trim().length < 3) {
-            throw new Error('Evə çatdırılmada ünvan yazılmalıdır.');
+          } else {
+            if ($('#n-addr').value.trim().length < 3) {
+              throw new Error('Evə çatdırılmada ünvan yazılmalıdır.');
+            }
+            var pickedCheck = $('#n-picked').dataset.id;
+            var custNameCheck = $('#n-name').value.trim() || $('#n-search').value.trim();
+            if (!pickedCheck && custNameCheck.length < 2) {
+              throw new Error('Müştərinin adını yazın və ya axtarışdan seçin.');
+            }
           }
 
-          // A company delivery names the company, not a person, so there is no
-          // customer field to send and none is required. The server attaches
-          // the company itself.
-          var picked = dest === 'COMPANY' ? '' : $('#n-picked').dataset.id;
+          var picked = dest === 'COMPANY' ? '' : ($('#n-picked').dataset.id || '');
+          var custName = dest === 'COMPANY'
+            ? undefined
+            : (picked ? undefined : ($('#n-name').value.trim() || $('#n-search').value.trim() || undefined));
 
           // The field reads DD.MM.YYYY. An empty or impossible one is refused
           // here rather than sent on, because a delivery filed under a month that
@@ -1345,13 +1361,11 @@ function newDeliveryForm() {
 
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
-            customerName: dest === 'COMPANY'
-              ? undefined
-              : (picked ? undefined : $('#n-name').value.trim()),
+            customerName: custName,
             waterType: currentWater(),
             destinationType: dest,
-            companyId: dest === 'COMPANY' ? $('#n-company').value : undefined,
-            officeId: dest === 'COMPANY' ? $('#n-office').value : undefined,
+            companyId: dest === 'COMPANY' ? ($('#n-company').value || undefined) : undefined,
+            officeId: dest === 'COMPANY' ? ($('#n-office').value || undefined) : undefined,
             address: dest === 'HOME' ? $('#n-addr').value.trim() : undefined,
             bottleCount: count,
             deliveredAt: day + 'T12:00:00.000Z',
