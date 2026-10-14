@@ -1247,7 +1247,6 @@ function newDeliveryForm() {
       '</div>' +
 
       moneyField('n-count', 'Bidon sayı', '') +
-      '<div class="alert alert-info" id="n-price-note" hidden></div>' +
       textField('n-date', 'Tarix', todayInput(), { type: 'date' }),
       [
         { label: 'Ləğv et', kind: 'outline' },
@@ -1295,7 +1294,6 @@ function newDeliveryForm() {
       var b = e.target.closest('.seg-btn');
       if (!b) return;
       $$('#n-water-seg .seg-btn').forEach(function (x) { x.classList.toggle('is-on', x === b); });
-      showPriceNote();
     });
     $('#n-dest-seg').addEventListener('click', function (e) {
       var b = e.target.closest('.seg-btn');
@@ -1307,30 +1305,11 @@ function newDeliveryForm() {
       // A company delivery names a company, not a person. Showing a customer
       // picker there would invite a name that contradicts the office.
       $('#n-customer-wrap').hidden = dest === 'COMPANY';
-      showPriceNote();
     });
-
-    function showPriceNote() {
-      var box = $('#n-price-note');
-      // Workers are not told the price. They record what went where; the
-      // amount is the owner's. The API withholds the number from them too, so
-      // this is about not implying what they must not rely on - not about
-      // hiding something they could fetch.
-      if (dest !== 'COMPANY' || !isAdmin()) { box.hidden = true; return; }
-      var c = companies.filter(function (x) { return x.id === $('#n-company').value; })[0];
-      if (!c) { box.hidden = true; return; }
-      var p = currentWater() === 'SPRING' ? c.springPrice : c.filteredPrice;
-      box.hidden = false;
-      box.innerHTML = 'Qiymət avtomatik: <strong>' + money(p) + ' AZN</strong>' +
-        ' / bidon. Hər bidon üçün sayı yazsan, ümumi məbləğ avtomatik hesablanır.';
-    }
 
     $('#n-company').addEventListener('change', function () {
       $('#n-office').innerHTML = officeOptions(this.value);
-      showPriceNote();
     });
-    $('#n-office').addEventListener('change', showPriceNote);
-    showPriceNote();
 
     var timer = null;
     $('#n-search').addEventListener('input', function (e) {
@@ -1375,7 +1354,6 @@ function newDeliveryForm() {
         }
         $('#n-company').innerHTML = companyOptions();
         $('#n-office').innerHTML = officeOptions(companies[0].id);
-        showPriceNote();
       })
       .catch(function (e) {
         $('#n-company').innerHTML = '<option value="">Yüklənə bilmədi</option>';

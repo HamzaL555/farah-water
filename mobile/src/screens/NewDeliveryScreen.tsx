@@ -17,7 +17,7 @@ import { companiesApi, customersApi, deliveriesApi } from '../services/endpoints
 import { enqueue } from '../services/offlineQueue';
 import { useAuth } from '../context/AuthContext';
 import { useAsync, useSubmit } from '../hooks/useAsync';
-import { formatDate, formatMoney, dayRelativeName, recentDeliveryDates, todayInputValue } from '../utils/format';
+import { formatDate, dayRelativeName, recentDeliveryDates, todayInputValue } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
 import { ApiError } from '../services/types';
 import type { DestinationType, WaterType } from '../types';
@@ -74,19 +74,11 @@ export const NewDeliveryScreen: React.FC = () => {
     [companies, companyId],
   );
   const offices = company?.offices ?? [];
-  const isAdmin = user?.role === 'ADMIN';
   // A company delivery names a company and an office, not a person, so there is
   // no customer to pick and none is required. The server attaches the company.
   const isCompany = destinationType === 'COMPANY';
-  // A worker is not told the price. The company prices come back as null for
-  // them, so this cannot drift into showing something the API withheld.
-  const unitPrice = useMemo(() => {
-    if (destinationType !== 'COMPANY' || !company || !isAdmin) return 0;
-    return waterType === 'SPRING' ? (company.springPrice ?? 0) : (company.filteredPrice ?? 0);
-  }, [destinationType, company, waterType, isAdmin]);
 
   const count = parseInt(bottleCount || '0', 10);
-  const total = Math.round(count * unitPrice * 100) / 100;
 
   const countError = touched && (!Number.isInteger(count) || count <= 0) ? 'Bidon sayı ən azı 1 olmalıdır.' : null;
   const nameError =
@@ -242,15 +234,6 @@ export const NewDeliveryScreen: React.FC = () => {
                     ))}
                   </View>
                   {officeError ? <HelperText type="error">{officeError}</HelperText> : null}
-                  {isAdmin ? (
-                    <View style={styles.priceNote}>
-                      <Text style={styles.priceNoteText}>
-                        Qiymət avtomatik:{' '}
-                        <Text style={styles.priceNoteStrong}>{formatMoney(unitPrice)} AZN</Text> / bidon.{'\n'}
-                        Admin qiyməti və ödənilən pulu sonra yazacaq.
-                      </Text>
-                    </View>
-                  ) : null}
                 </>
               ) : null}
             </>
@@ -364,16 +347,6 @@ export const NewDeliveryScreen: React.FC = () => {
           />
           {countError ? <HelperText type="error">{countError}</HelperText> : null}
 
-          {destinationType === 'COMPANY' && company && isAdmin ? (
-            <View style={styles.priceNote}>
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>{count} bidon × {formatMoney(unitPrice)}</Text>
-                <Text style={styles.previewValue}>{formatMoney(total)}</Text>
-              </View>
-              <Text style={styles.previewNote}>Qiymət şirkətin müqaviləsi ilə təyin olunur.</Text>
-            </View>
-          ) : null}
-
           {/* Paper's Menu measures the box that holds the anchor node, so the
             input has to sit inside it. The Pressable wraps it because a
             read-only TextInput is not guaranteed to report touches on every
@@ -478,7 +451,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   priceNoteText: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
-  priceNoteStrong: { fontWeight: '700', color: colors.info },
   selectedBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -492,10 +464,6 @@ const styles = StyleSheet.create({
   selectedText: { color: colors.success, fontSize: 13, fontWeight: '500' },
   divider: { marginVertical: spacing.lg },
   fieldLabel: { fontSize: 12, color: colors.textMuted, marginBottom: spacing.xs },
-  previewRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  previewLabel: { fontSize: 13, color: colors.textMuted },
-  previewValue: { fontSize: 14, fontWeight: '700', color: colors.text },
-  previewNote: { fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, fontStyle: 'italic' },
   save: { marginTop: spacing.lg },
   saveContent: { height: 52 },
   footer: { textAlign: 'center', fontSize: 11, color: colors.textMuted, marginTop: spacing.sm },
