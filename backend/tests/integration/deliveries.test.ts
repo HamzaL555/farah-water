@@ -29,6 +29,50 @@ describe('deliveries, payments and debts', () => {
     expect(d.status).toBe('UNPAID');
   });
 
+  it('starts a home delivery at zero: there is no standard price, the admin writes it', async () => {
+    await stockIn(fx.admin!.token, 100);
+    await issueStock(fx.admin!.token, fx.worker!.id, 50);
+
+    // The owner's rule: a home delivery has no price to look up. The driver
+    // records how many bottles went where and nothing else; the owner decides
+    // what a bottle cost and what was collected, afterwards. Inventing a
+    // default here would put a number in the reports that nobody ever charged.
+    const res = await api
+      .post('/api/v1/deliveries')
+      .set(auth(fx.worker!.token))
+      .send({
+        idempotencyKey: key(),
+        customerName: 'Test Customer',
+        address: 'Test Street 1',
+        bottleCount: 10,
+      });
+    expect(res.statusCode).toBe(201);
+
+    const d = res.body.data;
+    expect(d.unitPrice).toBe(0);
+    expect(d.totalAmount).toBe(0);
+    expect(d.debtAmount).toBe(0);
+    expect(d.status).toBe('UNPAID');
+
+    // Until the owner prices it, nothing counts as owed and nothing counts as
+    // revenue - an unpriced delivery is not a zero-value sale.
+    expect((await listPayments(fx.admin!.token)).body.data.totalAmount).toBe(0);
+
+    // Then the owner sets both at once and the ledger follows.
+    const priced = await api
+      .patch('/api/v1/deliveries/' + d.id)
+      .set(auth(fx.admin!.token))
+      .send({ unitPrice: '2.00', paidAmount: '12.00', reason: '' });
+    expect(priced.statusCode).toBe(200);
+    expect(priced.body.data.totalAmount).toBe(20);
+    expect(priced.body.data.paidAmount).toBe(12);
+    expect(priced.body.data.debtAmount).toBe(8);
+    expect(priced.body.data.status).toBe('PARTIAL');
+
+    // Revenue is the cash, not the bill: 12 came in against 20 owed.
+    expect((await listPayments(fx.admin!.token)).body.data.totalAmount).toBe(12);
+  });
+
   it('handles partial payment: 12 of 20 AZN leaves 8 AZN debt', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);

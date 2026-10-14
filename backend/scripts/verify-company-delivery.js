@@ -4,9 +4,12 @@
  *
  *   1. A company delivery needs no customer - the form no longer shows one and
  *      the server must not ask for one either. The company itself is attached,
- *      so the drop still shows up in reports and on the invoice.
- *   2. The admin's price / payment correction no longer insists on a reason.
- *   3. Times read as Baku time, not as the server's UTC.
+ *      so the drop still shows up in reports and on the invoice. Its price is
+ *      the contract price, set by the server.
+ *   2. A home delivery starts at zero. There is no standard price to look up;
+ *      the owner writes the price and the cash afterwards.
+ *   3. The admin's price / payment correction no longer insists on a reason.
+ *   4. Times read as Baku time, not as the server's UTC.
  *
  * Usage: node scripts/verify-company-delivery.js <baseUrl> <adminPassword>
  * Run make-test-worker.js first; clean up with wipe-test-data.js afterwards.
@@ -82,7 +85,7 @@ async function login(who) {
     check('qiymət server tərəfindən qoyuldu', Number(d.unitPrice) > 0, String(d.unitPrice));
   }
 
-  console.log('\n=== 2. EV CATDIRILMASINDA MUSTERI YENI DE YERINDDIR ===');
+  console.log('\n=== 2. EV CATDIRILMASI QIYMETSIZ BASLAYIR ===');
   const noCustomer = await call('/deliveries', {
     token: worker,
     method: 'POST',
@@ -94,6 +97,36 @@ async function login(who) {
     },
   });
   check('müştərisiz ev çatdırılması rədd edildi', noCustomer.status === 422, `HTTP ${noCustomer.status}`);
+
+  const home = await call('/deliveries', {
+    token: worker,
+    method: 'POST',
+    body: {
+      idempotencyKey: `verify-home2-${Date.now()}`,
+      destinationType: 'HOME',
+      customerName: 'Verify Miştəri',
+      address: 'verify ünvanı 2',
+      bottleCount: 5,
+    },
+  });
+  const h = home.body?.data;
+  if (check('ev çatdırılması yaradıldı', home.status === 201, `HTTP ${home.status}`)) {
+    // There is no standard price to fall back on. The owner writes it later, so
+    // a fresh home delivery carries nothing: no price, no total, no debt owed.
+    check('qiymət yoxdur (0)', Number(h.unitPrice) === 0, String(h.unitPrice));
+    check('ümumi məbləğ yoxdur (0)', Number(h.totalAmount) === 0, String(h.totalAmount));
+    check('borc yoxdur (0)', Number(h.debtAmount) === 0, String(h.debtAmount));
+
+    const priced = await call('/deliveries/' + h.id, {
+      token: admin,
+      method: 'PATCH',
+      body: { unitPrice: '2.00', paidAmount: '6.00', reason: '' },
+    });
+    check('admin qiyməti yazdı', priced.status === 200 && Number(priced.body?.data?.totalAmount) === 10,
+      'total ' + priced.body?.data?.totalAmount);
+    check('ödləniş 6, borc 4', Number(priced.body?.data?.paidAmount) === 6 && Number(priced.body?.data?.debtAmount) === 4,
+      'paid ' + priced.body?.data?.paidAmount + ' · debt ' + priced.body?.data?.debtAmount);
+  }
 
   console.log('\n=== 3. ADMINE DUZELISDE SEBEB MECBUR DEYIL ===');
   if (d?.id) {
