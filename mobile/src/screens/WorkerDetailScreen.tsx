@@ -132,6 +132,7 @@ export const WorkerDetailScreen: React.FC<Props> = ({ route }) => {
                 <DeliveryRow
                   key={d.id}
                   delivery={d}
+                  isAdmin
                   onPress={() => navigation.navigate('DeliveryDetail', { deliveryId: d.id })}
                 />
               ))

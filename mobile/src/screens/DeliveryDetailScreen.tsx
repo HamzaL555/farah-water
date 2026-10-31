@@ -288,16 +288,23 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
           <KeyValueRow label="Qeyd" value={data.note ?? '-'} />
         </SectionCard>
 
-        <View style={styles.row}>
-          <StatCard label="Ümumi məbləğ" value={formatMoney(data.totalAmount)} icon="📄" accent={colors.primary} />
-          <StatCard
-            label="Qalan borc"
-            value={formatMoney(data.debtAmount)}
-            icon="⚠️"
-            accent={data.debtAmount > 0 ? colors.danger : colors.success}
-            background={data.debtAmount > 0 ? colors.dangerBg : colors.successBg}
-          />
-        </View>
+        {/* İşçinin gördüyü şirkət çatdırılmasında ümumi məbləğ və borc gizlənir:
+             qiymət adminin, borc isə hesabın environment-dır, işçinin işi deyil. */}
+        {!(
+          data.destinationType === 'COMPANY' &&
+          !isAdmin
+        ) ? (
+          <View style={styles.row}>
+            <StatCard label="Ümumi məbləğ" value={formatMoney(data.totalAmount)} icon="📄" accent={colors.primary} />
+            <StatCard
+              label="Qalan borc"
+              value={formatMoney(data.debtAmount)}
+              icon="⚠️"
+              accent={data.debtAmount > 0 ? colors.danger : colors.success}
+              background={data.debtAmount > 0 ? colors.dangerBg : colors.successBg}
+            />
+          </View>
+        ) : null}
 
         {isCancelled ? (
           <View style={styles.cancelledBox}>

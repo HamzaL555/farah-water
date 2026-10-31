@@ -311,6 +311,86 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
   };
 }
 
+/**
+ * Aylıq və illik xlsx / xls exportu üçün əlavə bölüş hissələri.
+ *
+ * `rows` — «Çatdırılmalar» hissəsinin satelləri (Tarix=0, Bidon=7, Ümumi=9,
+ * Ödənilən=10, Borc=11). Yaş extracti «DD.MM.YYYY».
+ */
+export function breakdownSections(title: string, rows: (string | number)[][]): ReportSection[] {
+  const out: ReportSection[] = [];
+  if (!rows.length) return out;
+
+  const toNum = (v: string | number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const totalRow = (label: string, groups: { c: number; b: number; t: number; p: number; d: number }[]) =>
+    [
+      label,
+      groups.reduce((s, g) => s + g.c, 0),
+      groups.reduce((s, g) => s + g.b, 0),
+      groups.reduce((s, g) => s + g.t, 0),
+      groups.reduce((s, g) => s + g.p, 0),
+      groups.reduce((s, g) => s + g.d, 0),
+    ] as (string | number)[];
+
+  if (title.startsWith('Aylıq hesabat')) {
+    const map = new Map<string, { c: number; b: number; t: number; p: number; d: number }>();
+    for (const r of rows) {
+      const date = String(r[0] ?? '');
+      let e = map.get(date);
+      if (!e) { e = { c: 0, b: 0, t: 0, p: 0, d: 0 }; map.set(date, e); }
+      e.c += 1;
+      e.b += toNum(r[7]);
+      e.t += toNum(r[9]);
+      e.p += toNum(r[10]);
+      e.d += toNum(r[11]);
+    }
+    const data = [...map.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, e]) => [date, e.c, e.b, e.t, e.p, e.d] as (string | number)[]);
+    out.push({
+      heading: 'Günlük bölüş',
+      columns: ['Tarix', 'Çatdırılma', 'Bidon', 'Ümumi', 'Gəlir', 'Borc'],
+      rows: data,
+      totals: totalRow('GÜN CƏMİ', data.map((r) => ({ c: Number(r[1]), b: Number(r[2]), t: Number(r[3]), p: Number(r[4]), d: Number(r[5]) }))),
+    });
+  }
+
+  if (title.startsWith('İllik hesabat')) {
+    const MONTHS = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun', 'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr'];
+    const map = new Map<number, { c: number; b: number; t: number; p: number; d: number }>();
+    for (const r of rows) {
+      const date = String(r[0] ?? '');
+      const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(date);
+      if (!m) continue;
+      const mon = +m[2];
+      if (mon < 1 || mon > 12) continue;
+      let e = map.get(mon);
+      if (!e) { e = { c: 0, b: 0, t: 0, p: 0, d: 0 }; map.set(mon, e); }
+      e.c += 1;
+      e.b += toNum(r[7]);
+      e.t += toNum(r[9]);
+      e.p += toNum(r[10]);
+      e.d += toNum(r[11]);
+    }
+    const data = MONTHS.map((name, i) => {
+      const e = map.get(i + 1) ?? { c: 0, b: 0, t: 0, p: 0, d: 0 };
+      return [name, e.c, e.b, e.t, e.p, e.d] as (string | number)[];
+    });
+    out.push({
+      heading: 'Aylıq bölüş',
+      columns: ['Ay', 'Çatdırılma', 'Bidon', 'Ümumi', 'Gəlir', 'Borc'],
+      rows: data,
+      totals: totalRow('İL CƏMİ', data.map((r) => ({ c: Number(r[1]), b: Number(r[2]), t: Number(r[3]), p: Number(r[4]), d: Number(r[5]) }))),
+    });
+  }
+
+  return out;
+}
+
 // ============================== CSV =======================================
 
 function csvCell(value: string | number): string {

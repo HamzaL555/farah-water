@@ -4,7 +4,7 @@ import { requireAuth } from '../common/middleware/auth';
 import { validate } from '../common/middleware/validate';
 import { actorOf } from '../common/utils/actor';
 import { reportSchema } from '../common/schemas';
-import { buildReport, reportToCsv, reportToPdf } from './reports.service';
+import { buildReport, breakdownSections, reportToCsv, reportToPdf } from './reports.service';
 import { reportToXlsx, monthName } from './reports.xlsx';
 import { reportToXls } from './reports.xls';
 import { startOfLocalMonth, endOfLocalMonth, startOfLocalYear, endOfLocalYear, tzOffsetMinutes } from '../common/utils/date';
@@ -40,6 +40,14 @@ async function sendPeriodReport(
     actor,
   );
   report.title = opts.title;
+
+  // Excel variantlar üçün ay / gün bölüşü hissələri (requirement 6.1 və 6.2).
+  if (format === 'xlsx' || format === 'xls') {
+    const delSection = report.sections.find((s) => s.heading === 'Çatdırılmalar');
+    report.sections.push(
+      ...breakdownSections(report.title, delSection ? delSection.rows : []),
+    );
+  }
 
   if (format === 'csv') {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

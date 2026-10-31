@@ -6,6 +6,7 @@ import { Searchbar, Button, ActivityIndicator, SegmentedButtons } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DeliveryRow } from '../components/DeliveryRow';
 import { EmptyState } from '../components/EmptyState';
+import { useAuth } from '../context/AuthContext';
 import { useAsync } from '../hooks/useAsync';
 import { debtsApi } from '../services/endpoints';
 import { formatMoney } from '../utils/format';
@@ -23,6 +24,8 @@ type Mode = 'deliveries' | 'customers';
  */
 export const DebtsScreen: React.FC<{ showWorkerFilter?: boolean }> = ({ showWorkerFilter = false }) => {
   const navigation = useNavigation<Nav>();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<Mode>('deliveries');
 
@@ -87,6 +90,7 @@ export const DebtsScreen: React.FC<{ showWorkerFilter?: boolean }> = ({ showWork
                 key={d.id}
                 delivery={d}
                 showWorker
+                isAdmin={isAdmin}
                 onPress={() => navigation.navigate('DeliveryDetail', { deliveryId: d.id })}
               />
             ))

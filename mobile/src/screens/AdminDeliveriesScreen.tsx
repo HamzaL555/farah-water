@@ -71,6 +71,7 @@ export const AdminDeliveriesScreen: React.FC = () => {
     <DeliveryRow
       delivery={item}
       showWorker
+      isAdmin
       onPress={() => navigation.navigate('DeliveryDetail', { deliveryId: item.id })}
     />
   );

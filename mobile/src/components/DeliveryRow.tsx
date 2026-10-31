@@ -10,10 +10,11 @@ interface Props {
   delivery: Delivery;
   onPress?: () => void;
   showWorker?: boolean;
+  isAdmin?: boolean;
 }
 
 /** Compact, scannable delivery row (mobile replacement for a table row). */
-export const DeliveryRow: React.FC<Props> = ({ delivery, onPress, showWorker = false }) => (
+export const DeliveryRow: React.FC<Props> = ({ delivery, onPress, showWorker = false, isAdmin = false }) => (
   <Pressable onPress={onPress} android_ripple={{ color: colors.surfaceVariant }}>
     <Card style={styles.card} mode="contained">
       <Card.Content style={styles.content}>
@@ -42,24 +43,28 @@ export const DeliveryRow: React.FC<Props> = ({ delivery, onPress, showWorker = f
 
         <Divider style={styles.divider} />
 
-        <View style={styles.amountRow}>
-          <View>
-            <Text style={styles.amountLabel}>Ümumi</Text>
-            <Text style={styles.amount}>{formatMoney(delivery.totalAmount)}</Text>
+        {/* Şirkət çatdırılmasının məbləği işçidən gizlənir: qiymət və borc
+             adminin işidir, işçi yalnız nə götürdüqünü bilsin. */}
+        {!(delivery.destinationType === 'COMPANY' && !isAdmin) ? (
+          <View style={styles.amountRow}>
+            <View>
+              <Text style={styles.amountLabel}>Ümumi</Text>
+              <Text style={styles.amount}>{formatMoney(delivery.totalAmount)}</Text>
+            </View>
+            <View style={styles.amountBlock}>
+              <Text style={styles.amountLabel}>Ödənilən</Text>
+              <Text style={[styles.amount, { color: colors.success }]}>{formatMoney(delivery.paidAmount)}</Text>
+            </View>
+            <View style={styles.amountBlock}>
+              <Text style={styles.amountLabel}>Borc</Text>
+              <Text
+                style={[styles.amount, { color: delivery.debtAmount > 0 ? colors.danger : colors.textMuted }]}
+              >
+                {formatMoney(delivery.debtAmount)}
+              </Text>
+            </View>
           </View>
-          <View style={styles.amountBlock}>
-            <Text style={styles.amountLabel}>Ödənilən</Text>
-            <Text style={[styles.amount, { color: colors.success }]}>{formatMoney(delivery.paidAmount)}</Text>
-          </View>
-          <View style={styles.amountBlock}>
-            <Text style={styles.amountLabel}>Borc</Text>
-            <Text
-              style={[styles.amount, { color: delivery.debtAmount > 0 ? colors.danger : colors.textMuted }]}
-            >
-              {formatMoney(delivery.debtAmount)}
-            </Text>
-          </View>
-        </View>
+        ) : null}
       </Card.Content>
     </Card>
   </Pressable>

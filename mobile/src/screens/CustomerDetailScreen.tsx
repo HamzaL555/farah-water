@@ -9,6 +9,7 @@ import { DeliveryRow } from '../components/DeliveryRow';
 import { EmptyState } from '../components/EmptyState';
 import { KeyValueRow } from '../components/KeyValueRow';
 import { SectionCard } from '../components/SectionCard';
+import { useAuth } from '../context/AuthContext';
 import { useAsync } from '../hooks/useAsync';
 import { customersApi } from '../services/endpoints';
 import { formatDate, formatMoney } from '../utils/format';
@@ -20,6 +21,8 @@ type Props = NativeStackScreenProps<AdminStackParamList, 'CustomerDetail'>;
 /** Customer profile: totals plus their delivery history. */
 export const CustomerDetailScreen: React.FC<Props> = ({ route }) => {
   const { customerId } = route.params;
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
 
   const { data, loading, error, run } = useAsync(
     () => customersApi.detail(customerId).then((r) => r.data),
@@ -90,7 +93,7 @@ export const CustomerDetailScreen: React.FC<Props> = ({ route }) => {
         {data.deliveries.length === 0 ? (
           <EmptyState icon="🚚" title="Çatdırılma yoxdur" message="Bu müştəri üçün hələ çatdırılma qeydə alınmayıb." />
         ) : (
-          data.deliveries.map((d) => <DeliveryRow key={d.id} delivery={d} showWorker />)
+          data.deliveries.map((d) => <DeliveryRow key={d.id} delivery={d} showWorker isAdmin={isAdmin} />)
         )}
 
         <Button mode="outlined" onPress={() => void run()} style={styles.refresh}>

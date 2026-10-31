@@ -1314,6 +1314,9 @@ function newDeliveryForm() {
       '<label class="field" id="n-addr-wrap"><span class="field-label">Ünvan</span>' +
         '<input id="n-addr" placeholder="Məsələn: Bakı, Xəzər prospekti 12" /></label>' +
 
+      '<label class="field" id="n-cphone-wrap"><span class="field-label">Telefon</span>' +
+        '<input id="n-cphone" placeholder="Müştəri telefonu" /></label>' +
+
       // The customer is looked up the same way for both destinations.
       '<div id="n-customer-wrap">' +
         '<label class="field"><span class="field-label">Müştəri (ad və ya telefon)</span>' +
@@ -1362,6 +1365,7 @@ function newDeliveryForm() {
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
             customerName: custName,
+            contactPhone: dest === 'HOME' ? ($('#n-cphone').value.trim() || undefined) : undefined,
             waterType: currentWater(),
             destinationType: dest,
             companyId: dest === 'COMPANY' ? ($('#n-company').value || undefined) : undefined,
@@ -1453,6 +1457,7 @@ function newDeliveryForm() {
             $('#n-results').innerHTML = d.items.length
               ? d.items.map(function (c) {
                   return '<div><a href="#" data-cid="' + c.id + '" data-cname="' + esc(c.name) +
+                    '" data-caddr="' + esc(c.address || '') + '" data-cphone="' + esc(c.phone || '') +
                     '" style="display:block;padding:5px 0">' + esc(c.name) +
                     (c.phone ? ' · ' + esc(c.phone) : '') + '</a></div>';
                 }).join('')
@@ -1466,6 +1471,12 @@ function newDeliveryForm() {
                 $('#n-manual-wrap').hidden = true;
                 $('#n-results').innerHTML = '';
                 $('#n-search').value = '';
+                // Avtomatik doldur: seçilmiş müştərinin ünvan və telefonu forma gedir.
+                if (a.dataset.caddr) $('#n-addr').value = a.dataset.caddr;
+                if (a.dataset.cphone) {
+                  var ph = $('#n-cphone');
+                  if (ph) ph.value = a.dataset.cphone;
+                }
               });
             });
           })
