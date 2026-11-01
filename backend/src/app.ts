@@ -94,8 +94,9 @@ export function createApp(): Express {
     const adminDir = path.join(__dirname, '../public/admin');
     app.use('/admin', express.static(adminDir));
     // SPA fallback: any non-API, non-admin-asset route serves index.html so
-    // client-side routing works on refresh.
-    app.get('/admin/*', (_req, res) => {
+    // client-side routing works on refresh. Uses a regex so Express 5
+    // path-to-regexp accepts it.
+    app.get(/\/admin\/(?!api\/)(.*)/, (_req, res) => {
       res.sendFile(path.join(adminDir, 'index.html'));
     });
   }
