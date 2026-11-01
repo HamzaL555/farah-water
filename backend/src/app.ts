@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
+import path from 'path';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { errorHandler, notFoundHandler } from './common/middleware/error';
@@ -16,6 +17,7 @@ import { inventoryRouter } from './inventory/inventory.routes';
 import { dashboardRouter } from './dashboard/dashboard.routes';
 import { reportsRouter } from './reports/reports.routes';
 import { auditRouter } from './audit/audit.routes';
+import { deliveryCorrectionsRouter } from './delivery-corrections/delivery-corrections.routes';
 
 export function createApp(): Express {
   const app = express();
@@ -82,8 +84,21 @@ export function createApp(): Express {
   api.use('/dashboard', dashboardRouter);
   api.use('/reports', reportsRouter);
   api.use('/audit', auditRouter);
+  api.use('/delivery-corrections', deliveryCorrectionsRouter);
 
   app.use(config.apiPrefix, api);
+
+  // Serve the admin panel static files in production.
+  // In development the panel is served by the Vite/dev server or opened directly.
+  if (config.isProd) {
+    const adminDir = path.join(__dirname, '../public/admin');
+    app.use('/admin', express.static(adminDir));
+    // SPA fallback: any non-API, non-admin-asset route serves index.html so
+    // client-side routing works on refresh.
+    app.get('/admin/*', (_req, res) => {
+      res.sendFile(path.join(adminDir, 'index.html'));
+    });
+  }
 
   app.get('/', (_req, res) => {
     res.json({ data: { name: 'Farah Water Company API', version: '1.0.0', status: 'running' } });

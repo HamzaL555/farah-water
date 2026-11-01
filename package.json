@@ -1,0 +1,11 @@
+{
+  "name": "farah-water",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "cd backend && npx prisma generate",
+    "build": "cd backend && npx tsc -p tsconfig.build.json",
+    "start": "cd backend && node dist/main.js"
+  },
+  "dependencies": {}
+}

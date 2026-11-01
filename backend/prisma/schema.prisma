@@ -27,6 +27,12 @@ enum DeliveryStatus {
   CANCELLED
 }
 
+enum DeliveryCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum PaymentMethod {
   CASH
   CARD
@@ -91,6 +97,8 @@ model User {
 
   refreshTokens  RefreshToken[]
   deliveries     Delivery[]     @relation("DeliveryWorker")
+  corrections    DeliveryCorrection[] @relation("CorrectionRequestedBy")
+  approvedCorrections DeliveryCorrection[] @relation("CorrectionApprovedBy")
   recordedPay    Payment[]      @relation("PaymentRecordedBy")
   inventoryTx    InventoryTransaction[]
   /// Stock rows this user RECORDED. Distinct from `inventoryTx`, which are the
@@ -239,6 +247,7 @@ model Delivery {
   office    Office?    @relation(fields: [officeId], references: [id], onDelete: Restrict)
   payments  Payment[]
   debtsAdj  DebtAdjustment[]
+  corrections DeliveryCorrection[]
   inventory InventoryTransaction[]
 
   @@index([workerId, deliveredAt])
@@ -351,6 +360,32 @@ model InventoryTransaction {
 }
 
 // ============================== AUDIT ======================================
+
+/// İşçinin çatdırılmanın bidon sayısını dəyişməsi istəməsini izləyir.
+/// Əvvəlcə "pending" olur, administrator rədd edir və ya təsdiqləyər.
+/// Təsdiqləndikdə Delivery.bottleCount yenilenir və borc/ toplam avtomatik
+/// yenidən hesablanır.
+model DeliveryCorrection {
+  id            String   @id @default(uuid())
+  deliveryId    String
+  oldBottleCount Int
+  newBottleCount Int
+  reason        String
+  status        DeliveryCorrectionStatus @default(PENDING)
+  requestedById String
+  approvedById  String?
+  requestedAt   DateTime @default(now())
+  approvedAt    DateTime?
+
+  delivery  Delivery   @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  requestedBy User     @relation("CorrectionRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy  User?    @relation("CorrectionApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([deliveryId])
+  @@index([status])
+  @@index([requestedById, requestedAt])
+  @@map("delivery_corrections")
+}
 
 model AuditLog {
   id         String   @id @default(uuid())

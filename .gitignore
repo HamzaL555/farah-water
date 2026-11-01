@@ -66,3 +66,8 @@ tools/public-url.txt
 
 # downloaded report files produced by verify-report-files.js
 .tmp-reports/
+.vercel
+.env*
+# temp test files
+db_url*.txt
+login_body.json
