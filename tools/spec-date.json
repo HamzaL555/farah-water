@@ -1,0 +1,9 @@
+{
+  "file": "backend/src/common/utils/date.ts",
+  "reps": [
+    {
+      "oldStr": "/** Date and time together, for records where the order matters. */\nexport function formatDDMMYYYYHHMM(value: Date | string | null | undefined): string {\n  const date = formatDDMMYYYY(value);\n  const time = formatTimeHHMM(value);\n  return date && time ? `${date} ${time}` : date || time;\n}",
+      "newStr": "/** Date and time together, for records where the order matters. */\nexport function formatDDMMYYYYHHMM(value: Date | string | null | undefined): string {\n  const date = formatDDMMYYYY(value);\n  const time = formatTimeHHMM(value);\n  return date && time ? `${date} ${time}` : date || time;\n}\n\n/**\n * Date and time with seconds - `02.11.2026 00:21:35`.\n *\n * The warehouse ledger is immutable, so two movements recorded in the same\n * minute must still be told apart by an admin reconciling who handed what to\n * whom. Minutes are not enough for that.\n */\nexport function formatDDMMYYYYHHMMSS(value: Date | string | null | undefined): string {\n  const date = formatDDMMYYYY(value);\n  if (!date || !value) return date;\n  const d = value instanceof Date ? value : new Date(value);\n  if (Number.isNaN(d.getTime())) return date;\n  const shifted = new Date(d.getTime() + tzOffsetMinutes() * 60_000);\n  const hh = String(shifted.getUTCHours()).padStart(2, '0');\n  const mm = String(shifted.getUTCMinutes()).padStart(2, '0');\n  const ss = String(shifted.getUTCSeconds()).padStart(2, '0');\n  return `${date} ${hh}:${mm}:${ss}`;\n}"
+    }
+  ]
+}

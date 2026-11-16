@@ -150,7 +150,7 @@ describe('deliveries, payments and debts', () => {
 
     // The worker must have lost exactly 10 bottles, not 20.
     const stock = (await api.get('/api/v1/inventory/my-stock').set(auth(fx.worker!.token))).body.data;
-    expect(stock.quantity).toBe(40);
+    expect(stock.totalQty).toBe(40);
 
     expect(await prisma.delivery.count()).toBe(1);
     expect(await prisma.inventoryTransaction.count({ where: { type: 'OUT_DELIVERY' } })).toBe(1);
@@ -444,7 +444,7 @@ describe('role separation', () => {
     const ids: string[] = res.body.data.workers.map((w: { workerId: string }) => w.workerId);
     expect(ids).toContain(fx.worker2!.id);
     const row = res.body.data.workers.find((w: { workerId: string }) => w.workerId === fx.worker2!.id);
-    expect(row.quantity).toBe(0);
+    expect(row.totalQty).toBe(0);
   });
 
   it('blocks a worker from creating another user', async () => {
@@ -458,8 +458,8 @@ describe('role separation', () => {
   it('allows an admin to see all deliveries', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
-    // worker2 takes from the warehouse themselves - nobody hands out stock.
-    await api.post('/api/v1/inventory/issue').set(auth(fx.worker2!.token)).send({ bottleCount: 50 });
+    // worker2 is a regular worker, so the anbardar hands them stock.
+    await issueStock(fx.admin!.token, fx.worker2!.id, 50);
     await makeDelivery(fx.worker!.token, { customerName: 'Cust A', address: 'Addr A' });
     await makeDelivery(fx.worker2!.token, { customerName: 'Cust B', address: 'Addr B' });
 

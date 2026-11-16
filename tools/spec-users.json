@@ -1,0 +1,41 @@
+{
+  "file": "backend/src/users/users.service.ts",
+  "reps": [
+    {
+      "oldStr": "import { Prisma, Role, WorkerType } from '@prisma/client';",
+      "newStr": "import { Prisma, Role, WaterType, WorkerType } from '@prisma/client';"
+    },
+    {
+      "oldStr": "export interface CreateWorkerInput {\n  fullName: string;\n  username: string;\n  phone?: string;\n  email?: string;\n  password?: string;\n}",
+      "newStr": "export interface CreateWorkerInput {\n  fullName: string;\n  username: string;\n  phone?: string;\n  email?: string;\n  password?: string;\n  /** Anbardar (WAREHOUSE_KEEPER) or adi isci (REGULAR). */\n  workerType?: WorkerType;\n}"
+    },
+    {
+      "oldStr": "      passwordHash: await bcrypt.hash(password, config.security.bcryptRounds),\n      role: Role.WORKER,\n      mustChangePassword: generated,",
+      "newStr": "      passwordHash: await bcrypt.hash(password, config.security.bcryptRounds),\n      role: Role.WORKER,\n      workerType: input.workerType ?? WorkerType.REGULAR,\n      mustChangePassword: generated,"
+    },
+    {
+      "oldStr": "  patch: { fullName?: string; phone?: string | null; email?: string | null; isActive?: boolean },\n  actor: Actor,",
+      "newStr": "  patch: {\n    fullName?: string;\n    phone?: string | null;\n    email?: string | null;\n    isActive?: boolean;\n    workerType?: WorkerType;\n  },\n  actor: Actor,"
+    },
+    {
+      "oldStr": "  if (patch.isActive !== undefined) {",
+      "newStr": "  // Only an admin reaches this function, so the worker type may only ever be\n  // reassigned by an admin - exactly as the module requires.\n  if (patch.workerType !== undefined) data.workerType = patch.workerType;\n  if (patch.isActive !== undefined) {"
+    },
+    {
+      "oldStr": "  const balance = await prisma.inventoryBalance.findUnique({ where: { key: `WORKER:${id}` } });\n  const debt = await prisma.delivery.aggregate({",
+      "newStr": "  // One row per water type since the split, so both are read and summed.\n  const balances = await prisma.inventoryBalance.findMany({\n    where: { workerId: id, scope: 'WORKER' },\n    select: { waterType: true, quantity: true },\n  });\n  const filtered = balances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;\n  const spring = balances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;\n  const debt = await prisma.delivery.aggregate({"
+    },
+    {
+      "oldStr": "    ...serializeUser(worker),\n    stockInHand: balance?.quantity ?? 0,\n    outstandingDebt: Number((debt._sum.debtAmount ?? new Prisma.Decimal(0)).toFixed(2)),\n  };",
+      "newStr": "    ...serializeUser(worker),\n    // Bulaq and Filtr are kept apart everywhere; the total is only a summary.\n    stockByType: { filtered, spring, total: filtered + spring },\n    stockInHand: filtered + spring,\n    outstandingDebt: Number((debt._sum.debtAmount ?? new Prisma.Decimal(0)).toFixed(2)),\n  };"
+    },
+    {
+      "oldStr": "    const balance = balances.find((b) => b.workerId === w.id);",
+      "newStr": "    const own = balances.filter((b) => b.workerId === w.id);\n    const assignedFiltered = own.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;\n    const assignedSpring = own.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;"
+    },
+    {
+      "oldStr": "      assignedBottles: balance?.quantity ?? 0,",
+      "newStr": "      assignedBottles: assignedFiltered + assignedSpring,\n      assignedFiltered,\n      assignedSpring,"
+    }
+  ]
+}

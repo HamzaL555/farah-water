@@ -1,0 +1,13 @@
+{
+  "file": "backend/src/deliveries/delivery.service.ts",
+  "reps": [
+    {
+      "oldStr": "  Prisma,\n  Role,\n  WaterType,\n} from '@prisma/client';",
+      "newStr": "  Prisma,\n  Role,\n  WaterType,\n  WorkerType,\n} from '@prisma/client';"
+    },
+    {
+      "oldStr": "export interface Actor {\n  id: string;\n  role: Role;\n  fullName: string;\n}\n\n/**\n * Recomputes paid / debt / status for a delivery from the immutable money",
+      "newStr": "export interface Actor {\n  id: string;\n  role: Role;\n  fullName: string;\n  /** null for ADMIN and legacy rows; WAREHOUSE_KEEPER or REGULAR for workers. */\n  workerType?: WorkerType | null;\n}\n\n/**\n * Recomputes paid / debt / status for a delivery from the immutable money"
+    }
+  ]
+}

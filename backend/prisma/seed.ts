@@ -68,9 +68,11 @@ async function createAdmin(): Promise<void> {
 /** The warehouse balance row must exist so stock totals are readable from day one. */
 async function ensureWarehouse(): Promise<void> {
   await prisma.$executeRaw`
-    INSERT INTO inventory_balances ("key", scope, "workerId", quantity, "updatedAt")
-    VALUES ('WAREHOUSE', 'WAREHOUSE'::"BalanceScope", NULL, 0, NOW())
-    ON CONFLICT ("key") DO NOTHING
+    INSERT INTO inventory_balances ("key", scope, "workerId", "waterType", quantity, "updatedAt")
+    VALUES
+      ('WAREHOUSE:FILTERED', 'WAREHOUSE'::"BalanceScope", NULL, 'FILTERED'::"WaterType", 0, NOW()),
+      ('WAREHOUSE:SPRING', 'WAREHOUSE'::"BalanceScope", NULL, 'SPRING'::"WaterType", 0, NOW())
+    ON CONFLICT ("key", "waterType") DO NOTHING
   `;
   console.log('[seed] Anbar qalığı qeydi hazırdır.');
 }

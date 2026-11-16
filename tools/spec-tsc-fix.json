@@ -1,0 +1,9 @@
+{
+  "file": "backend/src/inventory/inventory.operations.ts",
+  "reps": [
+    {
+      "oldStr": "  const group = (rows: Array<{ waterType: WaterType; _sum: { bottleCount: number | null } }) =>",
+      "newStr": "  const group = (rows: Array<{ waterType: WaterType; _sum: { bottleCount: number | null } }>) =>"
+    }
+  ]
+}

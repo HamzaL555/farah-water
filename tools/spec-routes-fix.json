@@ -1,0 +1,9 @@
+{
+  "file": "backend/src/inventory/inventory.routes.ts",
+  "reps": [
+    {
+      "oldStr": "import { actorOf, param } from '../common/utils/actor';",
+      "newStr": "import { actorOf } from '../common/utils/actor';"
+    }
+  ]
+}

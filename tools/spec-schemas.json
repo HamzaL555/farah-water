@@ -1,0 +1,17 @@
+{
+  "file": "backend/src/common/schemas.ts",
+  "reps": [
+    {
+      "oldStr": "  DebtAdjustmentType,\n  WaterType,\n  DestinationType,\n} from '@prisma/client';",
+      "newStr": "  DebtAdjustmentType,\n  WaterType,\n  WorkerType,\n  DestinationType,\n} from '@prisma/client';"
+    },
+    {
+      "oldStr": "  password: strongPassword.optional(),\n});\n\nexport const updateWorkerSchema = z\n  .object({\n    fullName: z.string().trim().min(2).max(120).optional(),\n    phone: z.string().trim().max(30).nullable().optional(),\n    email: z.string().trim().max(150).nullable().optional(),\n    isActive: z.boolean().optional(),\n  })\n  .refine((v) => Object.keys(v).length > 0, { message: 'Heç nə dəyişdirilmədi.' });",
+      "newStr": "  password: strongPassword.optional(),\n  // The admin picks anbardar or adi isci when creating a worker. Older\n  // clients omit it, so the server falls back to REGULAR rather than failing.\n  workerType: z.nativeEnum(WorkerType).default(WorkerType.REGULAR),\n});\n\nexport const updateWorkerSchema = z\n  .object({\n    fullName: z.string().trim().min(2).max(120).optional(),\n    phone: z.string().trim().max(30).nullable().optional(),\n    email: z.string().trim().max(150).nullable().optional(),\n    isActive: z.boolean().optional(),\n    // Only an admin changes this; the route is admin-only already.\n    workerType: z.nativeEnum(WorkerType).optional(),\n  })\n  .refine((v) => Object.keys(v).length > 0, { message: 'Heç nə dəyişdirilmədi.' });"
+    },
+    {
+      "oldStr": "export const listInventorySchema = z.object({\n  type: z.nativeEnum(InventoryTxType).optional(),\n  workerId: z.string().uuid().optional(),\n  deliveryId: z.string().uuid().optional(),",
+      "newStr": "export const listInventorySchema = z.object({\n  type: z.nativeEnum(InventoryTxType).optional(),\n  waterType: z.nativeEnum(WaterType).optional(),\n  workerId: z.string().uuid().optional(),\n  // Who RECORDED the movement (the anbardar), as opposed to workerId which is\n  // whose stock moved. The history view filters on both.\n  createdById: z.string().uuid().optional(),\n  deliveryId: z.string().uuid().optional(),"
+    }
+  ]
+}

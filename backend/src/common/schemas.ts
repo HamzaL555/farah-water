@@ -1,3 +1,9 @@
+// ---------------------------------------------------------------------------
+// Farah Water Company - PostgreSQL schema
+// Money is always Decimal(12,2) -> Postgres `numeric` (NEVER float).
+// Financial rows are voided/adjusted, never hard-deleted.
+// ---------------------------------------------------------------------------
+
 import { z } from 'zod';
 import {
   DeliveryStatus,
@@ -5,6 +11,7 @@ import {
   PaymentMethod,
   DebtAdjustmentType,
   WaterType,
+  WorkerType,
   DestinationType,
 } from '@prisma/client';
 import { strongPassword } from '../auth/auth.schemas';
@@ -18,9 +25,53 @@ const dateFromQuery = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Tarix YYYY-AA-GG formatında olmalıdır.')
   .optional();
 
+// NOTE: A "worker type" (WAREHOUSE_KEEPER vs REGULAR) is only meaningful when
+// an admin creates a worker. Older clients omit the field, so the server falls
+// back to REGULAR rather than failing. Only an admin can reassign workerType
+// later via the /users/:id PATCH endpoint.
+// Do not remove this comment when adding new fields above.
+
+// ------------------------------ range preset -------------------------------
 export const rangePreset = z
   .enum(['today', 'yesterday', 'last7days', 'last30days', 'thisMonth', 'lastMonth', 'thisYear', 'all'])
   .optional();
+
+// Export commonly used schemas
+export const uuidParam = z.object({ id: z.string().uuid('Yanlış məlumat ID-si.') });
+
+export const listAuditSchema = z.object({
+  actorId: z.string().uuid().optional(),
+  action: z.string().trim().max(80).optional(),
+  entityType: z.string().trim().max(60).optional(),
+  entityId: z.string().trim().max(64).optional(),
+  preset: rangePreset,
+  from: dateFromQuery,
+  to: dateFromQuery,
+  page: intFromQuery(1, 100000),
+  pageSize: intFromQuery(1, 100),
+});
+
+export const cancelDeliverySchema = z.object({
+  reason: z.string().trim().min(3, 'Läğv səbəbi yazılmalıdır.').max(500),
+});
+
+export const listPaymentsSchema = z.object({
+  deliveryId: z.string().uuid().optional(),
+  workerId: z.string().uuid().optional(),
+  customerId: z.string().uuid().optional(),
+  method: z.nativeEnum(PaymentMethod).optional(),
+  preset: rangePreset,
+  from: dateFromQuery,
+  to: dateFromQuery,
+  search: z.string().trim().max(120).optional(),
+  includeVoided: z.coerce.boolean().optional(),
+  page: intFromQuery(1, 100000),
+  pageSize: intFromQuery(1, 100),
+});
+
+export const voidPaymentSchema = z.object({
+  reason: z.string().trim().min(3, 'Geri qaytarma səbəbi yazılmalıdır.').max(500),
+});
 
 // ------------------------------ deliveries --------------------------------
 
@@ -73,8 +124,7 @@ export const createDeliverySchema = z
     {
       message: 'Müştəri seçilməlidir və ya müştərinin adı yazılmalıdır.',
       path: ['customerName'],
-    },
-  );
+    });
 // NOTE: `unitPrice` and `paidAmount` are deliberately absent. A worker records
 // what they delivered; the admin sets the price and the money collected. The
 // service derives the price server-side, so a client that sends one anyway is
@@ -105,13 +155,13 @@ export const updateDeliverySchema = z.object({
   note: z.string().trim().max(1000).optional(),
   bottleCount: z.coerce.number().int().min(1).max(10000).optional(),
   unitPrice: z.union([z.coerce.number().min(0).max(1_000_000), z.string().regex(/^\d+(\.\d{1,2})?$/)]).optional(),
-  /**
+  /** 
    * The money actually collected, stated directly by the admin. Optional: leave
    * it out and only the price is corrected. This is deliberately NOT a status
    * field - "ödenilib" is always recomputed from the payment ledger, so it can
    * never drift from the money that genuinely arrived.
    */
-  /**
+  /** 
    * Optional. The owner asked for it: recording what was collected is the
    * point, and a mandatory reason turned the most common action in the app into
    * a form to think about. `idempotencyKey` still keys the correction, so the
@@ -121,13 +171,7 @@ export const updateDeliverySchema = z.object({
   reason: z.string().trim().max(500).default(''),
 });
 
-export const cancelDeliverySchema = z.object({
-  reason: z.string().trim().min(3, 'Ləğv səbəbi yazılmalıdır.').max(500),
-});
-
-export const uuidParam = z.object({ id: z.string().uuid('Yanlış məlumat ID-si.') });
-
-// ------------------------------- payments ---------------------------------
+// ------------------------------- payments --------------------------------
 
 export const createPaymentSchema = z.object({
   idempotencyKey: z.string().min(8).max(100),
@@ -142,25 +186,7 @@ export const createPaymentSchema = z.object({
   allowOverpayment: z.boolean().optional(),
 });
 
-export const listPaymentsSchema = z.object({
-  deliveryId: z.string().uuid().optional(),
-  workerId: z.string().uuid().optional(),
-  customerId: z.string().uuid().optional(),
-  method: z.nativeEnum(PaymentMethod).optional(),
-  preset: rangePreset,
-  from: dateFromQuery,
-  to: dateFromQuery,
-  search: z.string().trim().max(120).optional(),
-  includeVoided: z.coerce.boolean().optional(),
-  page: intFromQuery(1, 100000),
-  pageSize: intFromQuery(1, 100),
-});
-
-export const voidPaymentSchema = z.object({
-  reason: z.string().trim().min(3, 'Geri qaytarma səbəbi yazılmalıdır.').max(500),
-});
-
-// --------------------------------- debts ----------------------------------
+// --------------------------------- debts --------------------------------
 
 export const createAdjustmentSchema = z.object({
   deliveryId: z.string().uuid(),
@@ -185,11 +211,12 @@ export const listDebtsSchema = z.object({
   pageSize: intFromQuery(1, 100),
 });
 
-// ------------------------------- inventory --------------------------------
+// ------------------------------- inventory -------------------------------
 
 const bottleCount = z.coerce.number().int().min(1, 'Bidon sayı ən azı 1 olmalıdır.').max(100000);
 
 export const stockInSchema = z.object({
+  waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
   bottleCount,
   note: z.string().trim().max(500).optional(),
   idempotencyKey: z.string().min(8).max(100).optional(),
@@ -201,12 +228,14 @@ export const stockInSchema = z.object({
  * is nobody for the field to name.
  */
 export const takeFromWarehouseSchema = z.object({
+  waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
   bottleCount,
   note: z.string().trim().max(500).optional(),
   idempotencyKey: z.string().min(8).max(100).optional(),
 });
 
 export const returnStockSchema = z.object({
+  waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
   workerId: z.string().uuid().optional(),
   bottleCount,
   note: z.string().trim().max(500).optional(),
@@ -215,15 +244,28 @@ export const returnStockSchema = z.object({
 
 export const writeOffSchema = z.object({
   type: z.enum([InventoryTxType.DAMAGE, InventoryTxType.LOSS]),
+  waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
   bottleCount,
   workerId: z.string().uuid().optional(),
   note: z.string().trim().min(3, 'Səbəb yazılmalıdır.').max(500),
   idempotencyKey: z.string().min(8).max(100).optional(),
 });
 
+export const distributeToWorkerSchema = z.object({
+  waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
+  workerId: z.string().uuid('Yanlış işçi ID-si.'),
+  bottleCount,
+  note: z.string().trim().max(500).optional(),
+  idempotencyKey: z.string().min(8).max(100).optional(),
+});
+
 export const listInventorySchema = z.object({
   type: z.nativeEnum(InventoryTxType).optional(),
+  waterType: z.nativeEnum(WaterType).optional(),
   workerId: z.string().uuid().optional(),
+  // Who RECORDED the movement (the anbardar), as opposed to workerId which is
+  // whose stock moved. The history view filters on both.
+  createdById: z.string().uuid().optional(),
   deliveryId: z.string().uuid().optional(),
   preset: rangePreset,
   from: dateFromQuery,
@@ -232,7 +274,7 @@ export const listInventorySchema = z.object({
   pageSize: intFromQuery(1, 100),
 });
 
-// ------------------------------- customers --------------------------------
+// ------------------------------- customers -------------------------------
 
 export const createCustomerSchema = z.object({
   name: z.string().trim().min(2, 'Ad ən azı 2 simvol olmalıdır.').max(150),
@@ -257,7 +299,7 @@ export const updateCustomerSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-// ---------------------------------- users ---------------------------------
+// ------------------------------ users ---------------------------------
 
 export const createWorkerSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
@@ -265,6 +307,9 @@ export const createWorkerSchema = z.object({
   phone: z.string().trim().max(30).optional(),
   email: z.string().trim().max(150).optional(),
   password: strongPassword.optional(),
+  // The admin picks anbardar or adi isci when creating a worker. Older
+  // clients omit it, so the server falls back to REGULAR rather than failing.
+  workerType: z.nativeEnum(WorkerType).default(WorkerType.REGULAR),
 });
 
 export const updateWorkerSchema = z
@@ -273,6 +318,8 @@ export const updateWorkerSchema = z
     phone: z.string().trim().max(30).nullable().optional(),
     email: z.string().trim().max(150).nullable().optional(),
     isActive: z.boolean().optional(),
+    // Only an admin changes this; the route is admin-only already.
+    workerType: z.nativeEnum(WorkerType).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'Heç nə dəyişdirilmədi.' });
 
@@ -292,7 +339,7 @@ export const listWorkersSchema = z.object({
   pageSize: intFromQuery(1, 100),
 });
 
-// -------------------------------- dashboard -------------------------------
+// -------------------------------- dashboard ------------------------------
 
 export const dashboardRangeSchema = z.object({
   preset: rangePreset,
@@ -300,21 +347,7 @@ export const dashboardRangeSchema = z.object({
   to: dateFromQuery,
 });
 
-// ---------------------------------- audit ---------------------------------
-
-export const listAuditSchema = z.object({
-  actorId: z.string().uuid().optional(),
-  action: z.string().trim().max(80).optional(),
-  entityType: z.string().trim().max(60).optional(),
-  entityId: z.string().trim().max(64).optional(),
-  preset: rangePreset,
-  from: dateFromQuery,
-  to: dateFromQuery,
-  page: intFromQuery(1, 100000),
-  pageSize: intFromQuery(1, 100),
-});
-
-// --------------------------------- reports --------------------------------
+// --------------------------------- reports -------------------------------
 
 export const reportSchema = z.object({
   type: z.enum(['daily', 'period', 'worker', 'customer', 'inventory', 'payments', 'deliveries']),
@@ -332,7 +365,7 @@ export const reportSchema = z.object({
   year: z.string().regex(/^(\d{4}|last)$/).optional(),
 });
 
-// -------------------------------- settings --------------------------------
+// -------------------------------- settings -------------------------------
 
 export const updateSettingsSchema = z.object({
   companyName: z.string().trim().min(1).max(120).optional(),

@@ -6,6 +6,7 @@ import {
   Prisma,
   Role,
   WaterType,
+  WorkerType,
 } from '@prisma/client';
 import { prisma } from '../prisma';
 import { AppError, badRequest, forbidden, notFound } from '../common/utils/errors';
@@ -13,7 +14,9 @@ import { round2 } from '../common/utils/status';
 import { audit } from '../common/utils/audit';
 import { paginate, serializeDelivery, serializePayment, serializeDebtAdjustment, serializeInventoryTx } from '../common/utils/serialize';
 import { resolveRange, DateRangePreset, parseLocalDateInput } from '../common/utils/date';
-import { applyInventoryTx, workerKey } from '../inventory/inventory.service';
+import { applyInventoryTx, warehouseKey, workerKey } from '../inventory/inventory.service';
+import { createNotification } from '../notifications/notification.service';
+import { newIdempotencyKey } from '../auth/tokens';
 
 type PrismaClientLike = Prisma.TransactionClient | typeof prisma;
 
@@ -21,6 +24,8 @@ export interface Actor {
   id: string;
   role: Role;
   fullName: string;
+  /** null for ADMIN and legacy rows; WAREHOUSE_KEEPER or REGULAR for workers. */
+  workerType?: WorkerType | null;
 }
 
 /**
@@ -180,7 +185,7 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
           office: { select: { id: true, name: true } },
         },
       });
-      return { delivery: serializeDelivery(full as never), duplicate: true };
+      return { delivery: serializeDelivery(full as never), duplicate: true, stockAfter: null as number | null };
     }
 
     // ---- resolve customer -------------------------------------------------
@@ -250,11 +255,12 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
     });
 
     // ---- move the bottles out of the worker's hands (atomic + idempotent) --
-    await applyInventoryTx(tx, {
+    const stockResult = await applyInventoryTx(tx, {
       reference: `delivery:${createdDelivery.id}`,
       type: 'OUT_DELIVERY',
+      waterType: waterType,
       bottleCount: input.bottleCount,
-      balanceKey: workerKey(workerId),
+      balanceKey: workerKey(workerId, waterType),
       direction: -1,
       workerId,
       deliveryId: createdDelivery.id,
@@ -281,7 +287,7 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
 
     // Serialise inside the transaction so Decimal columns become plain JSON
     // numbers before the row object leaves this scope.
-    return { delivery: serializeDelivery(withRelations as never), duplicate: false };
+    return { delivery: serializeDelivery(withRelations as never), duplicate: false, stockAfter: stockResult.newBalance };
   });
 
   if (!result.duplicate) {
@@ -301,6 +307,22 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
         companyId,
         officeId,
       },
+    });
+
+    // The worker's hand stock just dropped by this delivery. Admins watch
+    // every balance movement, so they see the before and after here too.
+    await createNotification({
+      userId: actor.id,
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      action: 'OUT_DELIVERY',
+      waterType,
+      bottleCount: input.bottleCount,
+      beforeBalance: (result.stockAfter ?? 0) + input.bottleCount,
+      afterBalance: result.stockAfter ?? 0,
+      note: `Çatdırılma #${(result.delivery as { id: string }).id.slice(0, 8)}`,
+      relatedId: (result.delivery as { id: string }).id,
     });
   }
 
@@ -424,6 +446,10 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
   const beforeRow = await prisma.delivery.findUnique({ where: { id } });
   if (!beforeRow) throw notFound('Çatdırılma tapılmadı.');
 
+  // Filled inside the transaction, read after commit: the notification must
+  // only exist if the cancellation really moved bottles.
+  const stock = { after: null as number | null };
+
   return prisma.$transaction(async (tx) => {
     const delivery = await tx.delivery.findUnique({ where: { id } });
     if (!delivery) throw notFound('Çatdırılma tapılmadı.');
@@ -440,17 +466,19 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
     }
 
     // Return the bottles to the worker's hands so the stock stays truthful.
-    await applyInventoryTx(tx, {
+    const applied = await applyInventoryTx(tx, {
       reference: `delivery:cancel:${delivery.id}`,
       type: 'RETURN_TO_STOCK',
+      waterType: delivery.waterType,
       bottleCount: delivery.bottleCount,
-      balanceKey: workerKey(delivery.workerId),
+      balanceKey: workerKey(delivery.workerId, delivery.waterType),
       direction: 1,
       workerId: delivery.workerId,
       deliveryId: delivery.id,
       note: `Çatdırılma ləğv edildi: ${reason}`,
       createdById: actor.id,
     });
+    stock.after = applied.newBalance;
 
     const cancelled = await tx.delivery.update({
       where: { id },
@@ -464,9 +492,9 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
     });
 
     return serializeDelivery(cancelled as never);
-  }).then((serialized) => {
+  }).then(async (serialized) => {
     // Audit after commit so the log can never claim a change that rolled back.
-    void audit({
+    await audit({
       actorId: actor.id,
       actorName: actor.fullName,
       actorRole: actor.role,
@@ -478,6 +506,23 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
       meta: { reason },
       req,
     });
+
+    if (stock.after !== null) {
+      await createNotification({
+        userId: actor.id,
+        actorId: actor.id,
+        actorName: actor.fullName,
+        actorRole: actor.role,
+        action: 'RETURN_TO_STOCK',
+        waterType: beforeRow.waterType,
+        bottleCount: beforeRow.bottleCount,
+        // The bottles came back to the worker, so the balance rose by the count.
+        beforeBalance: stock.after - beforeRow.bottleCount,
+        afterBalance: stock.after,
+        note: `Çatdırılma ləğv edildi: ${reason}`,
+        relatedId: id,
+      });
+    }
     return serialized;
   });
 }
@@ -502,6 +547,13 @@ export async function updateDelivery(
   const before = await prisma.delivery.findUnique({ where: { id } });
   if (!before) throw notFound('Çatdırılma tapılmadı.');
   if (before.status === DeliveryStatus.CANCELLED) throw badRequest('Ləğv edilmiş çatdırılma dəyişdirilə bilməz.');
+
+  // Filled inside the transaction when bottles actually move; read after commit.
+  const stock = { after: null as number | null };
+  const appliedDelta =
+    patch.bottleCount !== undefined && patch.bottleCount !== before.bottleCount
+      ? patch.bottleCount - before.bottleCount
+      : 0;
 
   return prisma.$transaction(async (tx) => {
     const data: Prisma.DeliveryUpdateInput = { address: patch.address ?? before.address, note: patch.note ?? before.note };
@@ -541,33 +593,57 @@ export async function updateDelivery(
       data.debtAmount = finalTotal.minus(before.paidAmount);
     }
 
+    // Claim the row first with an optimistic check on bottleCount. If a second
+    // admin saved the same delivery between the read above and here, this hits
+    // zero rows, so we abort BEFORE moving any bottles. Without it, two
+    // concurrent edits carrying the same delta would deduct twice while the
+    // delivery only moved once.
+    const claimed = await tx.delivery.updateMany({
+      where: { id, bottleCount: before.bottleCount },
+      data,
+    });
+    if (claimed.count === 0) {
+      throw new AppError(
+        409,
+        'Çatdırılma bu arada başqa istifadəçi tərəfindən dəyişdirildi. Yenidən yoxlayın.',
+        'CONCURRENT_UPDATE',
+      );
+    }
+
     if (bottleDelta > 0) {
-      await applyInventoryTx(tx, {
-        reference: `delivery:adjust-up:${id}:${bottleDelta}`,
+      const applied = await applyInventoryTx(tx, {
+        // A fresh reference per actual movement: a revisiting edit such as
+        // 10 -> 12 -> 14 -> 12 -> 14 must still move bottles on the last step.
+        // A retry of the same request sees the new count already saved, so its
+        // delta is zero and no second movement is written.
+        reference: `delivery:adjust-up:${id}:${newIdempotencyKey()}`,
         type: 'OUT_DELIVERY',
+        waterType: before.waterType,
         bottleCount: bottleDelta,
-        balanceKey: workerKey(before.workerId),
+        balanceKey: workerKey(before.workerId, before.waterType),
         direction: -1,
         workerId: before.workerId,
         deliveryId: id,
         note: 'Administrator tərəfindən bidon sayı artırıldı',
         createdById: actor.id,
       });
+      stock.after = applied.newBalance;
     } else if (bottleDelta < 0) {
-      await applyInventoryTx(tx, {
-        reference: `delivery:adjust-down:${id}:${Math.abs(bottleDelta)}`,
+      const applied = await applyInventoryTx(tx, {
+        reference: `delivery:adjust-down:${id}:${newIdempotencyKey()}`,
         type: 'RETURN_TO_STOCK',
+        waterType: before.waterType,
         bottleCount: Math.abs(bottleDelta),
-        balanceKey: workerKey(before.workerId),
+        balanceKey: workerKey(before.workerId, before.waterType),
         direction: 1,
         workerId: before.workerId,
         deliveryId: id,
         note: 'Administrator tərəfindən bidon sayı azaldıldı',
         createdById: actor.id,
       });
+      stock.after = applied.newBalance;
     }
 
-    await tx.delivery.update({ where: { id }, data });
     let updated = await recalcDelivery(tx, id);
 
     // ---- the admin states how much was actually collected -------------------
@@ -633,6 +709,29 @@ export async function updateDelivery(
       meta: { reason: patch.reason?.trim() || null, bottleDelta, paidAmountSet: patch.paidAmount },
       req,
     });
+    return serialized;
+  }).then(async (serialized) => {
+    // A bottle-count correction moves bottles into or out of the worker's
+    // hands. The admin watching the warehouse sees that movement like any
+    // other, with the balance before and after it.
+    if (stock.after !== null && appliedDelta !== 0) {
+      await createNotification({
+        userId: actor.id,
+        actorId: actor.id,
+        actorName: actor.fullName,
+        actorRole: actor.role,
+        action: appliedDelta > 0 ? 'OUT_DELIVERY' : 'RETURN_TO_STOCK',
+        waterType: before.waterType,
+        bottleCount: Math.abs(appliedDelta),
+        beforeBalance: (stock.after as number) + appliedDelta,
+        afterBalance: stock.after as number,
+        note:
+          appliedDelta > 0
+            ? 'Çatdırılma bidon sayı artırıldı'
+            : 'Çatdırılma bidon sayı azaldıldı',
+        relatedId: id,
+      });
+    }
     return serialized;
   });
 }

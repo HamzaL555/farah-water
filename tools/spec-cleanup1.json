@@ -1,0 +1,9 @@
+{
+  "file": "backend/src/inventory/inventory.operations.ts",
+  "reps": [
+    {
+      "oldStr": "  const afterBalance = reportedKey === effect.balanceKey ? primary.newBalance : primary.newBalance;\n\n  // Re-read the reported leg when it is not the primary one: `newBalance`\n  // belongs to the primary leg only.\n  const finalReported =\n    reportedKey === effect.balanceKey\n      ? primary.newBalance\n      : (await prisma.inventoryBalance.findFirst({\n          where: { key: reportedKey, waterType: input.waterType },\n          select: { quantity: true },\n        }))?.quantity ?? 0;\n",
+      "newStr": "  // `newBalance` belongs to the primary leg only, so when the notification\n  // reports the other leg (the anbar), that leg is read back after the commit.\n  const finalReported =\n    reportedKey === effect.balanceKey\n      ? primary.newBalance\n      : (await prisma.inventoryBalance.findFirst({\n          where: { key: reportedKey, waterType: input.waterType },\n          select: { quantity: true },\n        }))?.quantity ?? 0;\n"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "file": "backend/src/deliveries/delivery.service.ts",
+  "reps": [
+    {
+      "oldStr": "import { applyInventoryTx, warehouseKey, workerKey } from '../inventory/inventory.service';",
+      "newStr": "import { applyInventoryTx, warehouseKey, workerKey } from '../inventory/inventory.service';\nimport { createNotification } from '../notifications/notification.service';"
+    },
+    {
+      "oldStr": "      return { delivery: serializeDelivery(full as never), duplicate: true };",
+      "newStr": "      return { delivery: serializeDelivery(full as never), duplicate: true, stockAfter: null as number | null };"
+    },
+    {
+      "oldStr": "    // ---- move the bottles out of the worker's hands (atomic + idempotent) --\n    await applyInventoryTx(tx, {",
+      "newStr": "    // ---- move the bottles out of the worker's hands (atomic + idempotent) --\n    const stockResult = await applyInventoryTx(tx, {"
+    },
+    {
+      "oldStr": "    return { delivery: serializeDelivery(withRelations as never), duplicate: false };",
+      "newStr": "    return { delivery: serializeDelivery(withRelations as never), duplicate: false, stockAfter: stockResult.newBalance };"
+    },
+    {
+      "oldStr": "        companyId,\n        officeId,\n      },\n    });\n  }\n\n  return { delivery: result.delivery, duplicate: result.duplicate };",
+      "newStr": "        companyId,\n        officeId,\n      },\n    });\n\n    // The worker's hand stock just dropped by this delivery. Admins watch\n    // every balance movement, so they see the before and after here too.\n    await createNotification({\n      userId: actor.id,\n      actorId: actor.id,\n      actorName: actor.fullName,\n      actorRole: actor.role,\n      action: 'OUT_DELIVERY',\n      waterType,\n      bottleCount: input.bottleCount,\n      beforeBalance: (result.stockAfter ?? 0) + input.bottleCount,\n      afterBalance: result.stockAfter ?? 0,\n      note: `Çatdırılma #${(result.delivery as { id: string }).id.slice(0, 8)}`,\n      relatedId: (result.delivery as { id: string }).id,\n    });\n  }\n\n  return { delivery: result.delivery, duplicate: result.duplicate };"
+    },
+    {
+      "oldStr": "  const beforeRow = await prisma.delivery.findUnique({ where: { id } });\n  if (!beforeRow) throw notFound('Çatdırılma tapılmadı.');\n\n  return prisma.$transaction(async (tx) => {\n    const delivery = await tx.delivery.findUnique({ where: { id } });",
+      "newStr": "  const beforeRow = await prisma.delivery.findUnique({ where: { id } });\n  if (!beforeRow) throw notFound('Çatdırılma tapılmadı.');\n\n  // Filled inside the transaction, read after commit: the notification must\n  // only exist if the cancellation really moved bottles.\n  const stock = { after: null as number | null };\n\n  return prisma.$transaction(async (tx) => {\n    const delivery = await tx.delivery.findUnique({ where: { id } });"
+    },
+    {
+      "oldStr": "    // Return the bottles to the worker's hands so the stock stays truthful.\n    await applyInventoryTx(tx, {",
+      "newStr": "    // Return the bottles to the worker's hands so the stock stays truthful.\n    const applied = await applyInventoryTx(tx, {"
+    },
+    {
+      "oldStr": "      note: `Çatdırılma ləğv edildi: ${reason}`,\n      createdById: actor.id,\n    });",
+      "newStr": "      note: `Çatdırılma ləğv edildi: ${reason}`,\n      createdById: actor.id,\n    });\n    stock.after = applied.newBalance;"
+    },
+    {
+      "oldStr": "      meta: { reason },\n      req,\n    });\n    return serialized;\n  });\n}",
+      "newStr": "      meta: { reason },\n      req,\n    });\n\n    if (stock.after !== null) {\n      void createNotification({\n        userId: actor.id,\n        actorId: actor.id,\n        actorName: actor.fullName,\n        actorRole: actor.role,\n        action: 'RETURN_TO_STOCK',\n        waterType: beforeRow.waterType,\n        bottleCount: beforeRow.bottleCount,\n        // The bottles came back to the worker, so the balance rose by the count.\n        beforeBalance: stock.after - beforeRow.bottleCount,\n        afterBalance: stock.after,\n        note: `Çatdırılma ləğv edildi: ${reason}`,\n        relatedId: id,\n      });\n    }\n    return serialized;\n  });\n}"
+    },
+    {
+      "oldStr": "  if (before.status === DeliveryStatus.CANCELLED) throw badRequest('Ləğv edilmiş çatdırılma dəyişdirilə bilməz.');\n",
+      "newStr": "  if (before.status === DeliveryStatus.CANCELLED) throw badRequest('Ləğv edilmiş çatdırılma dəyişdirilə bilməz.');\n\n  // Filled inside the transaction when bottles actually move; read after commit.\n  const stock = { after: null as number | null };\n  const appliedDelta =\n    patch.bottleCount !== undefined && patch.bottleCount !== before.bottleCount\n      ? patch.bottleCount - before.bottleCount\n      : 0;\n"
+    },
+    {
+      "oldStr": "    if (bottleDelta > 0) {\n      await applyInventoryTx(tx, {",
+      "newStr": "    if (bottleDelta > 0) {\n      const applied = await applyInventoryTx(tx, {"
+    },
+    {
+      "oldStr": "        note: 'Administrator tərəfindən bidon sayı artırıldı',\n        createdById: actor.id,\n      });",
+      "newStr": "        note: 'Administrator tərəfindən bidon sayı artırıldı',\n        createdById: actor.id,\n      });\n      stock.after = applied.newBalance;"
+    },
+    {
+      "oldStr": "    } else if (bottleDelta < 0) {\n      await applyInventoryTx(tx, {",
+      "newStr": "    } else if (bottleDelta < 0) {\n      const applied = await applyInventoryTx(tx, {"
+    },
+    {
+      "oldStr": "        note: 'Administrator tərəfindən bidon sayı azaldıldı',\n        createdById: actor.id,\n      });",
+      "newStr": "        note: 'Administrator tərəfindən bidon sayı azaldıldı',\n        createdById: actor.id,\n      });\n      stock.after = applied.newBalance;"
+    },
+    {
+      "oldStr": "      meta: { reason: patch.reason?.trim() || null, bottleDelta, paidAmountSet: patch.paidAmount },\n      req,\n    });\n    return serialized;\n  });\n}",
+      "newStr": "      meta: { reason: patch.reason?.trim() || null, bottleDelta, paidAmountSet: patch.paidAmount },\n      req,\n    });\n    return serialized;\n  }).then((serialized) => {\n    // A bottle-count correction moves bottles into or out of the worker's\n    // hands. The admin watching the warehouse sees that movement like any\n    // other, with the balance before and after it.\n    if (stock.after !== null && appliedDelta !== 0) {\n      void createNotification({\n        userId: actor.id,\n        actorId: actor.id,\n        actorName: actor.fullName,\n        actorRole: actor.role,\n        action: appliedDelta > 0 ? 'OUT_DELIVERY' : 'RETURN_TO_STOCK',\n        waterType: before.waterType,\n        bottleCount: Math.abs(appliedDelta),\n        beforeBalance: (stock.after as number) + appliedDelta,\n        afterBalance: stock.after as number,\n        note:\n          appliedDelta > 0\n            ? 'Çatdırılma bidon sayı artırıldı'\n            : 'Çatdırılma bidon sayı azaldıldı',\n        relatedId: id,\n      });\n    }\n    return serialized;\n  });\n}"
+    }
+  ]
+}

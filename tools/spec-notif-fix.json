@@ -1,0 +1,19 @@
+{
+  "file": "backend/src/notifications/notification.service.ts",
+  "reps": [
+    {
+      "oldStr": "import { notFound } from '../common/utils/errors';",
+      "newStr": "import { forbidden, notFound } from '../common/utils/errors';"
+    },
+    {
+      "oldStr": "throw new Error('Yalnız administrator bildirişlərə baxa bilər.');",
+      "newStr": "throw forbidden('Yalnız administrator bildirişlərə baxa bilər.');",
+      "allowMultiple": true
+    },
+    {
+      "oldStr": "throw new Error('Yalnız administrator bildirişləri dəyişə bilər.');",
+      "newStr": "throw forbidden('Yalnız administrator bildirişləri dəyişə bilər.');",
+      "allowMultiple": true
+    }
+  ]
+}

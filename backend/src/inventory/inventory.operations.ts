@@ -1,15 +1,17 @@
-import { InventoryTxType, Role } from '@prisma/client';
+import { InventoryTxType, Prisma, Role, WaterType, WorkerType } from '@prisma/client';
 import { prisma } from '../prisma';
 import { badRequest, forbidden, notFound } from '../common/utils/errors';
 import { audit } from '../common/utils/audit';
 import { paginate, serializeInventoryTx } from '../common/utils/serialize';
 import { resolveRange, DateRangePreset } from '../common/utils/date';
-import { applyInventoryTx, effectFor, WAREHOUSE_KEY, workerKey } from './inventory.service';
+import { applyInventoryTx, effectFor, warehouseKey, workerKey } from './inventory.service';
 import { Actor } from '../deliveries/delivery.service';
 import { newIdempotencyKey } from '../auth/tokens';
+import { createNotification } from '../notifications/notification.service';
 
 export interface StockMovementInput {
   type: InventoryTxType;
+  waterType: WaterType;
   bottleCount: number;
   workerId?: string | null;
   deliveryId?: string | null;
@@ -20,20 +22,63 @@ export interface StockMovementInput {
 }
 
 /**
+ * The anbardar runs the warehouse; the admin adds stock and hands bottles out;
+ * a REGULAR worker only ever receives bottles and spends them on deliveries.
+ *
+ * This guard sits in the service, not the route, so no overlooked endpoint can
+ * let a regular worker move warehouse stock on their behalf.
+ */
+function requireWarehouseAccess(actor: Actor): void {
+  if (actor.role === Role.ADMIN) return;
+  if (actor.workerType === WorkerType.WAREHOUSE_KEEPER) return;
+  throw forbidden('Bu əməliyyat yalnız anbardar tərəfindən aparıla bilər.');
+}
+
+/**
+ * Movements out of and back into the caller's OWN hands (issue/return/write-off).
+ * The admin is stopped too: stock in an admin's hands would sit in a bucket no
+ * worker view ever lists, so the warehouse total would silently disagree with
+ * the sum of its parts. The admin hands bottles out with /distribute instead.
+ */
+function requireKeeperForSelfMovement(actor: Actor): void {
+  if (actor.role === Role.ADMIN) {
+    throw forbidden('Bu əməliyyatı anbardar aparır. Administrator yalnız nəzarət edir.');
+  }
+  if (actor.workerType === WorkerType.WAREHOUSE_KEEPER) return;
+  throw forbidden('Bu əməliyyat yalnız anbardar tərəfindən aparıla bilər.');
+}
+
+/**
  * Moves stock between two buckets inside ONE database transaction, so the
  * warehouse total and the worker's handheld count can never drift apart.
+ * Water type is tracked on both legs so Bulaq and Filtr are never mixed.
+ *
+ * Every call also writes an admin notification carrying the real balance
+ * before and after, plus an audit row: who did it, to what, how many.
  */
 export async function moveStock(input: StockMovementInput, actor: Actor, req?: never) {
   if (!Number.isInteger(input.bottleCount) || input.bottleCount <= 0) {
     throw badRequest('Bidon sayı müsbət tam ədəd olmalıdır.');
   }
   const reference = input.reference ?? newIdempotencyKey();
-  const effect = effectFor(input.type, input.workerId);
+  const effect = effectFor(input.type, input.waterType, input.workerId);
 
-  const result = await prisma.$transaction(async (tx) => {
+  // The admin watches the anbar, so the notification reports the warehouse
+  // balance whenever a leg touches it; otherwise the worker's own bucket.
+  const reportedKey = effect.counterpartyKey?.startsWith('WAREHOUSE')
+    ? effect.counterpartyKey
+    : effect.balanceKey;
+
+  const { primary, beforeBalance } = await prisma.$transaction(async (tx) => {
+    const beforeRow = await tx.inventoryBalance.findFirst({
+      where: { key: reportedKey, waterType: input.waterType },
+      select: { quantity: true },
+    });
+
     const primary = await applyInventoryTx(tx, {
       reference,
       type: input.type,
+      waterType: input.waterType,
       bottleCount: input.bottleCount,
       balanceKey: effect.balanceKey,
       direction: effect.direction,
@@ -46,10 +91,11 @@ export async function moveStock(input: StockMovementInput, actor: Actor, req?: n
 
     if (effect.counterpartyKey) {
       // The opposite leg keeps the two buckets balanced in the same commit.
-      const counterpartyIsWorker = effect.counterpartyKey !== WAREHOUSE_KEY;
+      const counterpartyIsWorker = !effect.counterpartyKey.startsWith('WAREHOUSE');
       await applyInventoryTx(tx, {
         reference: `${reference}:cp`,
         type: input.type,
+        waterType: input.waterType,
         bottleCount: input.bottleCount,
         balanceKey: effect.counterpartyKey,
         direction: effect.counterpartyDirection!,
@@ -60,21 +106,57 @@ export async function moveStock(input: StockMovementInput, actor: Actor, req?: n
         createdById: actor.id,
       });
     }
-    return primary;
+
+    return { primary, beforeBalance: beforeRow?.quantity ?? 0 };
   });
 
-  await audit({
-    actorId: actor.id,
-    actorName: actor.fullName,
-    actorRole: actor.role,
-    action: `inventory.${input.type.toLowerCase()}`,
-    entityType: 'inventory_transaction',
-    entityId: result.transactionId,
-    meta: { bottleCount: input.bottleCount, workerId: input.workerId ?? null, note: input.note },
-    req,
-  });
+  // `newBalance` belongs to the primary leg only, so when the notification
+  // reports the other leg (the anbar), that leg is read back after the commit.
+  const finalReported =
+    reportedKey === effect.balanceKey
+      ? primary.newBalance
+      : (await prisma.inventoryBalance.findFirst({
+          where: { key: reportedKey, waterType: input.waterType },
+          select: { quantity: true },
+        }))?.quantity ?? 0;
 
-  return result;
+  // A replayed idempotent call is a no-op: the stock was already moved, so
+  // neither a second notification nor a second audit row may claim otherwise.
+  if (!primary.duplicate) {
+    await createNotification({
+      userId: actor.id, // the service fans this out to every active admin
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      action: input.type,
+      waterType: input.waterType,
+      bottleCount: input.bottleCount,
+      beforeBalance: beforeBalance,
+      afterBalance: finalReported,
+      note: input.note ?? null,
+      relatedId: input.deliveryId ?? primary.transactionId,
+    });
+
+    await audit({
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      action: `inventory.${input.type.toLowerCase()}`,
+      entityType: 'inventory_transaction',
+      entityId: primary.transactionId,
+      meta: {
+        bottleCount: input.bottleCount,
+        waterType: input.waterType,
+        workerId: input.workerId ?? null,
+        beforeBalance,
+        afterBalance: finalReported,
+        note: input.note,
+      },
+      req,
+    });
+  }
+
+  return { ...primary, beforeBalance, afterBalance: finalReported };
 }
 
 // --------------------------- authorised operations -------------------------
@@ -82,59 +164,96 @@ export async function moveStock(input: StockMovementInput, actor: Actor, req?: n
 /**
  * Records bottles arriving into the central warehouse.
  *
- * Both roles may do this: in this business the worker is the one who physically
- * counts what arrived, and the admin watches the warehouse total. Every row
- * keeps `createdById`, so the admin view can always show who entered how many,
- * and the audit log records it too.
+ * Anbardar and admin only: a regular worker receiving stock for the warehouse
+ * would let them change the anbar total on their own, which the module forbids.
+ * Every row keeps `createdById`, so the history always shows who entered how
+ * many, and the admin is notified.
  */
-export async function receiveStock(bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  return moveStock({ type: InventoryTxType.INBOUND, bottleCount, note, reference }, actor, req);
-}
-
-/**
- * Takes bottles out of the warehouse into the caller's own hands.
- *
- * WORKER ONLY, and always into the actor's own bucket. The owner asked that the
- * warehouse be run by the driver who physically receives and uses the stock,
- * with the admin watching the totals rather than dispensing. Accepting a
- * workerId would put that choice back in someone's hands; a worker can only
- * ever move stock to themselves, so the field is not taken at all.
- */
-export async function takeFromWarehouse(
+export async function receiveStock(
+  waterType: WaterType,
   bottleCount: number,
   note: string | null,
   actor: Actor,
   req?: never,
   reference?: string,
 ) {
-  if (actor.role === Role.ADMIN) {
-    throw forbidden('Anbardan bidon götürmək işçinin özündədir. Administrator yalnız baxır.');
-  }
+  requireWarehouseAccess(actor);
+  return moveStock({ type: InventoryTxType.INBOUND, waterType, bottleCount, note, reference }, actor, req);
+}
+
+/**
+ * Takes bottles out of the warehouse into the caller's own hands.
+ *
+ * Anbardar only, and always into the actor's own bucket. The admin cannot use
+ * it (see requireKeeperForSelfMovement) and a regular worker must be handed
+ * stock by the anbardar through /distribute instead of taking it themselves.
+ */
+export async function takeFromWarehouse(
+  waterType: WaterType,
+  bottleCount: number,
+  note: string | null,
+  actor: Actor,
+  req?: never,
+  reference?: string,
+) {
+  requireKeeperForSelfMovement(actor);
   return moveStock(
-    { type: InventoryTxType.ISSUE_TO_WORKER, bottleCount, workerId: actor.id, note, reference },
+    { type: InventoryTxType.ISSUE_TO_WORKER, waterType, bottleCount, workerId: actor.id, note, reference },
     actor,
     req,
   );
 }
 
 /**
- * Returns stock from the caller's own hands back into the warehouse.
+ * Returns stock from a worker's hands back into the warehouse.
  *
- * The warehouse is the worker's to run; the admin watches it. That is a
- * deliberate choice by the owner, and it has a cost worth stating: a figure
- * entered wrongly by a worker can only be corrected by that same worker. The
- * audit log records who entered it, so a mistake is visible and attributable -
- * but the fix has to come from the driver.
+ * With no `workerId`, an anbardar returns their OWN handheld stock (the
+ * original flow). With a `workerId`, an anbardar or admin records a regular
+ * worker handing bottles back, which moves THAT worker's bucket. A regular
+ * worker still cannot call this themselves: returning bottles raises the
+ * warehouse total, and "adi işçi anbar qalığını dəyişə bilməz" is the rule.
  */
-export async function returnToStock(bottleCount: number, note: string | null, actor: Actor, req?: never, reference?: string) {
-  if (actor.role === Role.ADMIN) {
-    throw forbidden('Anbarı işçi idarə edir. Administrator yalnız baxır.');
+export async function returnToStock(
+  waterType: WaterType,
+  bottleCount: number,
+  note: string | null,
+  actor: Actor,
+  req?: never,
+  reference?: string,
+  workerId?: string | null,
+) {
+  const targetId = workerId && workerId !== actor.id ? workerId : null;
+  if (targetId) {
+    requireWarehouseAccess(actor);
+    const target = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: { id: true, role: true, isActive: true },
+    });
+    if (!target || target.role !== Role.WORKER || !target.isActive) {
+      throw badRequest('Seçilmiş işçi tapılmadı və ya aktiv deyil.');
+    }
+    return moveStock(
+      { type: InventoryTxType.RETURN_TO_STOCK, waterType, bottleCount, workerId: targetId, note, reference },
+      actor,
+      req,
+    );
   }
-  return moveStock({ type: InventoryTxType.RETURN_TO_STOCK, bottleCount, workerId: actor.id, note, reference }, actor, req);
+
+  requireKeeperForSelfMovement(actor);
+  return moveStock(
+    { type: InventoryTxType.RETURN_TO_STOCK, waterType, bottleCount, workerId: actor.id, note, reference },
+    actor,
+    req,
+  );
 }
 
+/**
+ * Damaged / lost write-off from the caller's own hands. The reason is mandatory
+ * at the schema level: anbar qalığını səbəbsiz azaltmaq olmaz.
+ */
 export async function reportDamageOrLoss(
   type: InventoryTxType,
+  waterType: WaterType,
   bottleCount: number,
   note: string | null,
   actor: Actor,
@@ -143,95 +262,240 @@ export async function reportDamageOrLoss(
 ) {
   // Only write-off types are meaningful here; the route restricts the input.
   if (type !== InventoryTxType.DAMAGE && type !== InventoryTxType.LOSS) {
+    throw badRequest('Yalnız zədələnmiş vəya itmiş bidon qeydə alına bilər.');
+  }
+  requireKeeperForSelfMovement(actor);
+  return moveStock({ type, waterType, bottleCount, workerId: actor.id, note, reference }, actor, req);
+}
+
+/**
+ * Writes bottles off directly from the warehouse: damaged in storage, lost on
+ * the way in, or discarded. Separate from `reportDamageOrLoss`, which moves the
+ * caller's OWN handheld stock; here the bucket is the anbar itself.
+ *
+ * The reason is mandatory in the schema, and the row names the anbardar, so an
+ * anbar balance can never be reduced without a written cause and an author.
+ */
+export async function writeOffWarehouse(
+  type: InventoryTxType,
+  waterType: WaterType,
+  bottleCount: number,
+  note: string | null,
+  actor: Actor,
+  req?: never,
+  reference?: string,
+) {
+  if (type !== InventoryTxType.DAMAGE && type !== InventoryTxType.LOSS) {
     throw badRequest('Yalnız zədələnmiş və ya itmiş bidon qeydə alına bilər.');
   }
-  // Workers write off stock from their own hands. The admin does not: with the
-  // warehouse run by the worker, the admin watching is the whole of the role.
-  if (actor.role === Role.ADMIN) {
-    throw forbidden('Anbarı işçi idarə edir. Administrator yalnız baxır.');
+  requireKeeperForSelfMovement(actor);
+  // `workerId: null` is what makes effectFor() target the WAREHOUSE bucket.
+  return moveStock({ type, waterType, bottleCount, workerId: null, note, reference }, actor, req);
+}
+
+/**
+ * Hands bottles from the warehouse to a named worker's balance.
+ *
+ * Anbardar or admin. This is the module's core verb: the regular worker's
+ * balance only ever grows through here (and through a cancelled delivery being
+ * restored), so "heç bir işçi özbaşına bidon götürə bilməz" holds by construction.
+ */
+export async function distributeToWorker(
+  waterType: WaterType,
+  workerId: string,
+  bottleCount: number,
+  note: string | null,
+  actor: Actor,
+  req?: never,
+  reference?: string,
+) {
+  requireWarehouseAccess(actor);
+  // Verify the target is a worker. The anbardar may hand stock to any active
+  // worker, including another anbardar, but never to an admin account.
+  const target = await prisma.user.findUnique({
+    where: { id: workerId },
+    select: { id: true, role: true, workerType: true, fullName: true, isActive: true },
+  });
+  if (!target || target.role !== Role.WORKER || !target.isActive) {
+    throw badRequest('Seçilmiş işçi tapılmadı və ya aktiv deyil.');
   }
-  return moveStock({ type, bottleCount, workerId: actor.id, note, reference }, actor, req);
+  return moveStock(
+    { type: InventoryTxType.ISSUE_TO_WORKER, waterType, bottleCount, workerId, note, reference },
+    actor,
+    req,
+  );
 }
 
 // ------------------------------- reporting ---------------------------------
 
+/** Rows grouped into a per-water-type triple, defaulting to zero. */
+function byType(rows: Array<{ waterType: WaterType; sum: number | null }>) {
+  const pick = (wt: WaterType) => rows.find((r) => r.waterType === wt)?.sum ?? 0;
+  const filtered = pick(WaterType.FILTERED);
+  const spring = pick(WaterType.SPRING);
+  return { filtered, spring, total: filtered + spring };
+}
+
+/**
+ * The anbardar panel's numbers.
+ *
+ * Warehouse stock is read from the balance rows (the live truth), while the
+ * in/out figures are summed from the append-only ledger, split by water type.
+ * Nothing here can mix Bulaq with Filtr: every aggregate groups by waterType.
+ */
 export async function getWarehouseSummary(actor: Actor) {
-  const warehouse = await prisma.inventoryBalance.findUnique({
-    where: { key: WAREHOUSE_KEY },
-    select: { quantity: true },
-  });
+  // The warehouse total is not a regular worker's business - they only ever
+  // see their own balance, so this view is keeper/admin only.
+  requireWarehouseAccess(actor);
+
+  const [warehouseBalances, workerBalances, workerUsers, inboundRows, outRows, issuedRows, returnedRows, damaged, lost] =
+    await Promise.all([
+      prisma.inventoryBalance.findMany({
+        where: { scope: 'WAREHOUSE' },
+        select: { key: true, waterType: true, quantity: true },
+      }),
+      prisma.inventoryBalance.findMany({
+        where: { scope: 'WORKER' },
+        select: { workerId: true, waterType: true, quantity: true },
+      }),
+      prisma.user.findMany({
+        // Include deactivated workers: bottles in their hands still exist and
+        // must be visible to the anbardar, or the per-worker totals would not
+        // add up to the "işçilərdə" figure they are meant to explain.
+        where: { role: Role.WORKER },
+        select: { id: true, fullName: true, username: true, workerType: true, isActive: true },
+        orderBy: { fullName: 'asc' },
+      }),
+      prisma.inventoryTransaction.groupBy({
+        by: ['waterType'],
+        where: { balanceKey: { startsWith: 'WAREHOUSE' }, type: InventoryTxType.INBOUND },
+        _sum: { bottleCount: true },
+      }),
+      // Everything that left the anbar: given to workers, damaged or lost.
+      prisma.inventoryTransaction.groupBy({
+        by: ['waterType'],
+        where: { balanceKey: { startsWith: 'WAREHOUSE' }, direction: -1 },
+        _sum: { bottleCount: true },
+      }),
+      prisma.inventoryTransaction.groupBy({
+        by: ['waterType'],
+        where: { balanceKey: { startsWith: 'WAREHOUSE' }, type: InventoryTxType.ISSUE_TO_WORKER },
+        _sum: { bottleCount: true },
+      }),
+      prisma.inventoryTransaction.groupBy({
+        by: ['waterType'],
+        where: { balanceKey: { startsWith: 'WAREHOUSE' }, type: InventoryTxType.RETURN_TO_STOCK },
+        _sum: { bottleCount: true },
+      }),
+      prisma.inventoryTransaction.aggregate({ where: { type: InventoryTxType.DAMAGE }, _sum: { bottleCount: true } }),
+      prisma.inventoryTransaction.aggregate({ where: { type: InventoryTxType.LOSS }, _sum: { bottleCount: true } }),
+    ]);
 
   const start = resolveRange('today').start!;
   const end = resolveRange('today').end!;
 
-  const [inToday, outToday, damaged, lost, workerUsers, workerBalances] = await Promise.all([
+  const [todayInbound, todayOutbound] = await Promise.all([
     prisma.inventoryTransaction.aggregate({
-      where: { balanceKey: WAREHOUSE_KEY, type: InventoryTxType.INBOUND, occurredAt: { gte: start, lt: end } },
+      where: {
+        balanceKey: { startsWith: 'WAREHOUSE' },
+        type: InventoryTxType.INBOUND,
+        occurredAt: { gte: start, lt: end },
+      },
       _sum: { bottleCount: true },
     }),
     prisma.inventoryTransaction.aggregate({
-      where: { balanceKey: WAREHOUSE_KEY, direction: -1, type: { in: [InventoryTxType.ISSUE_TO_WORKER, InventoryTxType.DAMAGE, InventoryTxType.LOSS] }, occurredAt: { gte: start, lt: end } },
+      where: {
+        balanceKey: { startsWith: 'WAREHOUSE' },
+        direction: -1,
+        type: { in: [InventoryTxType.ISSUE_TO_WORKER, InventoryTxType.DAMAGE, InventoryTxType.LOSS] },
+        occurredAt: { gte: start, lt: end },
+      },
       _sum: { bottleCount: true },
-    }),
-    prisma.inventoryTransaction.aggregate({
-      where: { type: InventoryTxType.DAMAGE },
-      _sum: { bottleCount: true },
-    }),
-    prisma.inventoryTransaction.aggregate({
-      where: { type: InventoryTxType.LOSS },
-      _sum: { bottleCount: true },
-    }),
-    // Every worker account, not just the ones who already hold stock: a newly
-    // created worker has no InventoryBalance row yet, and must still be
-    // selectable for "İşçiyə təhvil".
-    prisma.user.findMany({
-      where: { role: Role.WORKER },
-      select: { id: true, fullName: true, username: true, isActive: true },
-      orderBy: { fullName: 'asc' },
-    }),
-    prisma.inventoryBalance.findMany({
-      where: { scope: 'WORKER' },
-      select: { workerId: true, quantity: true },
     }),
   ]);
 
-  const balanceByWorker = new Map(workerBalances.map((b) => [b.workerId, b.quantity]));
-  const inHand = workerBalances.reduce((sum, r) => sum + r.quantity, 0);
+  const warehouseByType = new Map<WaterType, number>();
+  for (const b of warehouseBalances) {
+    // Only the canonical `WAREHOUSE:<type>` row counts. A stray pre-split row
+    // would otherwise be able to overwrite the real total with a stale zero.
+    if (b.key === warehouseKey(b.waterType)) warehouseByType.set(b.waterType, b.quantity);
+  }
+
+  const workerByType = new Map<string, Map<WaterType, number>>();
+  for (const b of workerBalances) {
+    const wid = b.workerId!;
+    if (!workerByType.has(wid)) workerByType.set(wid, new Map());
+    workerByType.get(wid)!.set(b.waterType, b.quantity);
+  }
 
   const workers = workerUsers
-    .map((u) => ({
-      workerId: u.id,
-      workerName: u.fullName,
-      username: u.username,
-      isActive: u.isActive,
-      quantity: balanceByWorker.get(u.id) ?? 0,
-    }))
-    .sort((a, b) => b.quantity - a.quantity || a.workerName.localeCompare(b.workerName, 'az'));
+    .map((u) => {
+      const byTypeMap = workerByType.get(u.id) ?? new Map();
+      const filteredQty = byTypeMap.get(WaterType.FILTERED) ?? 0;
+      const springQty = byTypeMap.get(WaterType.SPRING) ?? 0;
+      return {
+        workerId: u.id,
+        workerName: u.fullName,
+        username: u.username,
+        workerType: u.workerType,
+        isActive: u.isActive,
+        filteredQty,
+        springQty,
+        totalQty: filteredQty + springQty,
+      };
+    })
+    .sort((a, b) => b.totalQty - a.totalQty || a.workerName.localeCompare(b.workerName, 'az'));
+
+  const warehouseFiltered = warehouseByType.get(WaterType.FILTERED) ?? 0;
+  const warehouseSpring = warehouseByType.get(WaterType.SPRING) ?? 0;
+  const totalWarehouse = warehouseFiltered + warehouseSpring;
+  const totalInWorkers = workers.reduce((s, w) => s + w.totalQty, 0);
+
+  const group = (rows: Array<{ waterType: WaterType; _sum: { bottleCount: number | null } }>) =>
+    byType(rows.map((r) => ({ waterType: r.waterType, sum: r._sum.bottleCount })));
 
   return {
-    warehouseQuantity: warehouse?.quantity ?? 0,
-    inWorkersHands: inHand,
-    totalSystemQuantity: (warehouse?.quantity ?? 0) + inHand,
-    todayInbound: inToday._sum.bottleCount ?? 0,
-    todayOutbound: outToday._sum.bottleCount ?? 0,
-    damagedTotal: damaged._sum.bottleCount ?? 0,
-    lostTotal: lost._sum.bottleCount ?? 0,
+    warehouse: { filtered: warehouseFiltered, spring: warehouseSpring, total: totalWarehouse },
+    // Kept for clients written before the water-type split; equals `total`.
+    warehouseQuantity: totalWarehouse,
+    inbound: group(inboundRows),
+    outbound: group(outRows),
+    issuedToWorkers: group(issuedRows),
+    returned: group(returnedRows),
+    inWorkersHands: totalInWorkers,
+    totalSystemQuantity: totalWarehouse + totalInWorkers,
+    todayInbound: todayInbound._sum?.bottleCount ?? 0,
+    todayOutbound: todayOutbound._sum?.bottleCount ?? 0,
+    damagedTotal: damaged._sum?.bottleCount ?? 0,
+    lostTotal: lost._sum?.bottleCount ?? 0,
     workers,
   };
 }
 
-/** A worker's own handheld stock count. */
+/** A worker's own handheld stock, split by water type. */
 export async function getMyStock(actor: Actor) {
-  const balance = await prisma.inventoryBalance.findUnique({
-    where: { key: workerKey(actor.id) },
-    select: { quantity: true, updatedAt: true },
+  const balances = await prisma.inventoryBalance.findMany({
+    where: { workerId: actor.id, scope: 'WORKER' },
+    select: { waterType: true, quantity: true, updatedAt: true },
   });
-  return { quantity: balance?.quantity ?? 0, updatedAt: balance?.updatedAt ?? null };
+  const filtered = balances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;
+  const spring = balances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;
+  return {
+    filteredQty: filtered,
+    springQty: spring,
+    totalQty: filtered + spring,
+    // Pre-split clients read `quantity`; it is the same total.
+    quantity: filtered + spring,
+    updatedAt: balances.length > 0 ? Math.max(...balances.map((b) => b.updatedAt.getTime())) : null,
+  };
 }
 
 export interface ListInventoryQuery {
   type?: InventoryTxType;
+  waterType?: WaterType;
   workerId?: string;
+  /** Who recorded the row - filters the history by anbardar. */
+  createdById?: string;
   deliveryId?: string;
   preset?: DateRangePreset;
   from?: string;
@@ -243,19 +507,26 @@ export interface ListInventoryQuery {
 export async function listInventoryTransactions(query: ListInventoryQuery, actor: Actor) {
   const page = Math.max(1, Number(query.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 25));
-  const { start, end } = resolveRange(query.preset, query.from ? new Date(query.from) : null, query.to ? new Date(query.to) : null);
+  const { start, end } = resolveRange(
+    query.preset,
+    query.from ? new Date(query.from) : null,
+    query.to ? new Date(query.to) : null,
+  );
 
-  const effectiveWorkerId = actor.role === Role.ADMIN ? query.workerId : actor.id;
-
-  const where = {
+  const where: Prisma.InventoryTransactionWhereInput = {
     ...(query.type ? { type: query.type } : {}),
+    ...(query.waterType ? { waterType: query.waterType } : {}),
+    ...(query.createdById ? { createdById: query.createdById } : {}),
     ...(query.deliveryId ? { deliveryId: query.deliveryId } : {}),
     ...(start || end ? { occurredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
-    // Workers see warehouse movements plus their own; admins see everything.
-    ...(actor.role === Role.ADMIN
-      ? effectiveWorkerId ? { workerId: effectiveWorkerId } : {}
-      : { OR: [{ balanceKey: WAREHOUSE_KEY }, { balanceKey: workerKey(actor.id) }] }),
+    ...(query.workerId ? { workerId: query.workerId } : {}),
   };
+
+  // A regular worker never sees the warehouse ledger: only their own rows.
+  // Keepers and admins see everything, optionally narrowed by the filters.
+  if (actor.role !== Role.ADMIN && actor.workerType !== WorkerType.WAREHOUSE_KEEPER) {
+    where.workerId = actor.id;
+  }
 
   const [rows, total] = await Promise.all([
     prisma.inventoryTransaction.findMany({

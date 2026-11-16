@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { api, prisma, fx, auth, key, stockIn, issueStock, makeDelivery, makePayment } from './setup';
 
-const WAREHOUSE = 'WAREHOUSE';
-const workerKey = (id: string) => `WORKER:${id}`;
+const WAREHOUSE = 'WAREHOUSE:FILTERED';
+const workerKey = (id: string, waterType = 'FILTERED') => `WORKER:${id}:${waterType}`;
 
 async function balances() {
   const rows = await prisma.inventoryBalance.findMany();
@@ -204,7 +204,7 @@ describe('inventory and stock accounting', () => {
 
     const res = await api.get('/api/v1/inventory/summary').set(auth(fx.admin!.token));
     expect(res.statusCode).toBe(200);
-    expect(res.body.data.warehouseQuantity).toBe(200);
+    expect(res.body.data.warehouse.filtered).toBe(200);
     expect(res.body.data.inWorkersHands).toBe(100);
     expect(res.body.data.totalSystemQuantity).toBe(300);
 
@@ -216,12 +216,12 @@ describe('inventory and stock accounting', () => {
   it('shows a worker only their own stock', async () => {
     await stockIn(fx.admin!.token, 300);
     await issueStock(fx.admin!.token, fx.worker!.id, 60);
-    // Each worker takes from the warehouse for themselves; nobody can hand
-    // stock to anybody else.
-    await api.post('/api/v1/inventory/issue').set(auth(fx.worker2!.token)).send({ bottleCount: 40 });
+    // The anbardar hands worker2 their own bottles; a regular worker never
+    // reaches into the warehouse for them.
+    await issueStock(fx.admin!.token, fx.worker2!.id, 40);
 
     const res = await api.get('/api/v1/inventory/my-stock').set(auth(fx.worker!.token));
-    expect(res.body.data.quantity).toBe(60);
+    expect(res.body.data.totalQty).toBe(60);
   });
 
   it('prevents hard deletion of inventory history at the database level', async () => {
@@ -236,7 +236,7 @@ describe('inventory and stock accounting', () => {
   it('prevents a negative balance written directly to the database', async () => {
     await stockIn(fx.admin!.token, 10);
     await expect(
-      prisma.$executeRawUnsafe(`UPDATE inventory_balances SET quantity = -5 WHERE "key" = 'WAREHOUSE'`),
+      prisma.$executeRawUnsafe(`UPDATE inventory_balances SET quantity = -5 WHERE "key" = 'WAREHOUSE:FILTERED'`),
     ).rejects.toThrow(/inventory_balances_quantity_non_negative/);
   });
 
@@ -295,5 +295,89 @@ describe('inventory and stock accounting', () => {
     expect(logs.length).toBeGreaterThanOrEqual(2);
     expect(logs.some((l) => l.action === 'inventory.inbound')).toBe(true);
     expect(logs.some((l) => l.action === 'inventory.issue_to_worker')).toBe(true);
+  });
+
+  it('keeps Bulaq and Filtr stock completely separate', async () => {
+    await api.post('/api/v1/inventory/stock-in').set(auth(fx.worker!.token))
+      .send({ bottleCount: 100, waterType: 'SPRING' });
+    await api.post('/api/v1/inventory/stock-in').set(auth(fx.worker!.token))
+      .send({ bottleCount: 60, waterType: 'FILTERED' });
+
+    const b = await balances();
+    expect(b['WAREHOUSE:SPRING'], 'Bulaq').toBe(100);
+    expect(b['WAREHOUSE:FILTERED'], 'Filtr').toBe(60);
+
+    const s = await api.get('/api/v1/inventory/summary').set(auth(fx.admin!.token));
+    expect(s.body.data.warehouse.spring).toBe(100);
+    expect(s.body.data.warehouse.filtered).toBe(60);
+    expect(s.body.data.warehouse.total).toBe(160);
+  });
+
+  it('hands one water type to a worker and a delivery spends only that type', async () => {
+    await api.post('/api/v1/inventory/stock-in').set(auth(fx.worker!.token))
+      .send({ bottleCount: 100, waterType: 'SPRING' });
+    await api.post('/api/v1/inventory/stock-in').set(auth(fx.worker!.token))
+      .send({ bottleCount: 100, waterType: 'FILTERED' });
+
+    const handover = await api.post('/api/v1/inventory/distribute').set(auth(fx.worker!.token))
+      .send({ workerId: fx.worker2!.id, bottleCount: 20, waterType: 'SPRING', note: 'Bulaq təhvili' });
+    expect(handover.statusCode).toBe(201);
+
+    let b = await balances();
+    expect(b['WAREHOUSE:SPRING']).toBe(80);
+    expect(b['WAREHOUSE:FILTERED']).toBe(100);
+    expect(b[workerKey(fx.worker2!.id, 'SPRING')]).toBe(20);
+    expect(b[workerKey(fx.worker2!.id, 'FILTERED')] ?? 0).toBe(0);
+
+    await makeDelivery(fx.worker2!.token, { waterType: 'SPRING', bottleCount: 5 });
+
+    b = await balances();
+    expect(b[workerKey(fx.worker2!.id, 'SPRING')]).toBe(15);
+    expect(b[workerKey(fx.worker2!.id, 'FILTERED')] ?? 0).toBe(0);
+  });
+
+  it('refuses a delivery from a water type the worker does not hold', async () => {
+    await stockIn(fx.admin!.token, 100); // FILTERED only
+    await issueStock(fx.admin!.token, fx.worker!.id, 20);
+
+    const res = await makeDelivery(fx.worker!.token, { waterType: 'SPRING', bottleCount: 5 });
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.message).toMatch(/bulaq suyu/i);
+  });
+
+  it('stops a regular worker from taking stock out of the warehouse', async () => {
+    await stockIn(fx.admin!.token, 100);
+
+    const res = await api.post('/api/v1/inventory/issue').set(auth(fx.worker2!.token))
+      .send({ bottleCount: 5, waterType: 'FILTERED' });
+    expect(res.statusCode).toBe(403);
+    expect((await balances())[WAREHOUSE]).toBe(100);
+  });
+
+  it('writes stock off from the warehouse with a written reason', async () => {
+    await stockIn(fx.admin!.token, 50);
+
+    const res = await api.post('/api/v1/inventory/warehouse-write-off').set(auth(fx.worker!.token))
+      .send({ type: 'DAMAGE', bottleCount: 5, note: 'Anbarda qablar sındı', waterType: 'FILTERED' });
+    expect(res.statusCode).toBe(201);
+    expect((await balances())[WAREHOUSE]).toBe(45);
+
+    const tx = await prisma.inventoryTransaction.findFirst({
+      where: { type: 'DAMAGE', balanceKey: WAREHOUSE },
+    });
+    expect(tx).not.toBeNull();
+    expect(tx?.note).toBe('Anbarda qablar sındı');
+    expect(tx?.createdById).toBe(fx.worker!.id);
+    expect(tx?.beforeBalance).toBe(50);
+    expect(tx?.afterBalance).toBe(45);
+  });
+
+  it('requires a reason before reducing the warehouse by hand', async () => {
+    await stockIn(fx.admin!.token, 50);
+
+    const res = await api.post('/api/v1/inventory/warehouse-write-off').set(auth(fx.worker!.token))
+      .send({ type: 'LOSS', bottleCount: 5, note: '', waterType: 'FILTERED' });
+    expect(res.statusCode).toBe(422);
+    expect((await balances())[WAREHOUSE]).toBe(50);
   });
 });

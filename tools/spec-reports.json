@@ -1,0 +1,21 @@
+{
+  "file": "backend/src/reports/reports.service.ts",
+  "reps": [
+    {
+      "oldStr": "import { resolveRange, DateRangePreset, formatDDMMYYYY, formatTimeHHMM } from '../common/utils/date';",
+      "newStr": "import { resolveRange, DateRangePreset, formatDDMMYYYY, formatTimeHHMM, formatDDMMYYYYHHMMSS } from '../common/utils/date';"
+    },
+    {
+      "oldStr": "    const [warehouse, workerBalances, movements] = await Promise.all([\n      prisma.inventoryBalance.aggregate({\n        where: { key: { startsWith: 'WAREHOUSE' } },\n        _sum: { quantity: true },\n      }),",
+      "newStr": "    const [warehouseRows, workerBalances, movements] = await Promise.all([\n      // Read per water type: Bulaq and Filtr are never summed into one figure.\n      prisma.inventoryBalance.findMany({\n        where: { key: { startsWith: 'WAREHOUSE' } },\n        select: { waterType: true, quantity: true },\n      }),"
+    },
+    {
+      "oldStr": "    sections.push({\n      heading: 'Anbar vəziyyəti',\n      columns: ['Sahə', 'Say'],\n      rows: [\n        ['Anbarda qalan bidon', warehouse?._sum.quantity ?? 0],\n        ['İşçilərin əlindəki bidonlar', workerBalances.reduce((s, b) => s + b.quantity, 0)],\n        ...workerBalances.filter((b) => b.worker).map((b) => [`  - ${b.worker!.fullName} (${b.worker!.username})`, b.quantity]),\n      ],\n    });",
+      "newStr": "    const warehouseOf = (t: WaterType) => warehouseRows.find((r) => r.waterType === t)?.quantity ?? 0;\n    const handsOf = (t: WaterType) =>\n      workerBalances.filter((b) => b.waterType === t).reduce((s, b) => s + b.quantity, 0);\n\n    sections.push({\n      heading: 'Anbar vəziyyəti',\n      columns: ['Sahə', 'Say'],\n      rows: [\n        ['Filtr suyu — anbarda qalan', warehouseOf(WaterType.FILTERED)],\n        ['Bulaq suyu — anbarda qalan', warehouseOf(WaterType.SPRING)],\n        ['Cəmi anbarda', warehouseRows.reduce((s, r) => s + r.quantity, 0)],\n        ['Filtr suyu — işçilərin əlində', handsOf(WaterType.FILTERED)],\n        ['Bulaq suyu — işçilərin əlində', handsOf(WaterType.SPRING)],\n        ['Cəmi işçilərin əlində', workerBalances.reduce((s, b) => s + b.quantity, 0)],\n        ...workerBalances\n          .filter((b) => b.worker && b.quantity !== 0)\n          .map((b) => [\n            `  - ${b.worker!.fullName} (${b.worker!.username}) [${WATER_TYPE_LABEL[b.waterType] ?? b.waterType}]`,\n            b.quantity,\n          ]),\n      ],\n    });"
+    },
+    {
+      "oldStr": "    sections.push({\n      heading: 'İnventar tarixçəsi',\n      columns: ['Tarix', 'Saat', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],\n      rows: movements.map((m) => [\n        formatDDMMYYYY(m.occurredAt),\n        formatTimeHHMM(m.occurredAt),\n        INVENTORY_TYPE_LABEL[m.type] ?? m.type,\n        `${m.direction > 0 ? '+' : '-'}${m.bottleCount}`,\n        m.worker?.fullName ?? '',\n        m.note ?? '',\n      ]),\n    });",
+      "newStr": "    sections.push({\n      heading: 'İnventar tarixçəsi',\n      columns: ['Tarix', 'Saat', 'Su növü', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],\n      rows: movements.map((m) => [\n        formatDDMMYYYY(m.occurredAt),\n        // Seconds included: two movements in one minute stay distinguishable.\n        formatDDMMYYYYHHMMSS(m.occurredAt).slice(11),\n        WATER_TYPE_LABEL[m.waterType] ?? m.waterType,\n        INVENTORY_TYPE_LABEL[m.type] ?? m.type,\n        `${m.direction > 0 ? '+' : '-'}${m.bottleCount}`,\n        m.worker?.fullName ?? '',\n        m.note ?? '',\n      ]),\n    });"
+    }
+  ]
+}

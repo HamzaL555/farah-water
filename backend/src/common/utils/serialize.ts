@@ -37,6 +37,7 @@ export function serializeUser(user: {
   phone: string | null;
   email: string | null;
   role: string;
+  workerType?: string | null;
   isActive: boolean;
   mustChangePassword?: boolean;
   lastLoginAt?: Date | null;
@@ -50,6 +51,7 @@ export function serializeUser(user: {
     phone: user.phone,
     email: user.email,
     role: user.role,
+    workerType: user.workerType ?? null,
     isActive: user.isActive,
     mustChangePassword: user.mustChangePassword ?? false,
     lastLoginAt: iso(user.lastLoginAt),
@@ -195,9 +197,12 @@ export function serializeInventoryTx(t: {
   bottleCount: number;
   direction: number;
   balanceKey: string;
+  waterType?: string;
   workerId: string | null;
   deliveryId: string | null;
   note: string | null;
+  beforeBalance?: number | null;
+  afterBalance?: number | null;
   occurredAt: Date;
   createdById: string;
   createdAt: Date;
@@ -213,10 +218,13 @@ export function serializeInventoryTx(t: {
     direction: t.direction,
     signedCount: t.direction * t.bottleCount,
     balanceKey: t.balanceKey,
+    waterType: t.waterType ?? 'FILTERED',
     workerId: t.workerId,
     workerName: t.worker?.fullName ?? null,
     deliveryId: t.deliveryId,
     note: t.note,
+    beforeBalance: t.beforeBalance ?? null,
+    afterBalance: t.afterBalance ?? null,
     occurredAt: iso(t.occurredAt),
     createdById: t.createdById,
     createdByName: t.createdBy?.fullName ?? null,

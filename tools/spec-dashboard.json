@@ -1,0 +1,21 @@
+{
+  "file": "backend/src/dashboard/dashboard.service.ts",
+  "reps": [
+    {
+      "oldStr": "  const stockTotal = stock.reduce((s, b) => s + b.quantity, 0);\n\n  return {",
+      "newStr": "  const stockTotal = stock.reduce((s, b) => s + b.quantity, 0);\n  const stockFiltered = stock.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;\n  const stockSpring = stock.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;\n\n  return {"
+    },
+    {
+      "oldStr": "    stockInHand: stockTotal,\n    recentDeliveries: myDeliveries.map(serializeDelivery),",
+      "newStr": "    stockInHand: stockTotal,\n    // Bulaq and Filtr never share a balance; the total is only a summary.\n    stockByType: { filtered: stockFiltered, spring: stockSpring, total: stockTotal },\n    stockFiltered,\n    stockSpring,\n    recentDeliveries: myDeliveries.map(serializeDelivery),"
+    },
+    {
+      "oldStr": "    prisma.inventoryBalance.aggregate({ where: { scope: 'WORKER' }, _sum: { quantity: true } }),",
+      "newStr": "    prisma.inventoryBalance.groupBy({ by: ['waterType'], where: { scope: 'WORKER' }, _sum: { quantity: true } }),"
+    },
+    {
+      "oldStr": "      warehouseQuantity: warehouseBalances.reduce((s, b) => s + b.quantity, 0),\n      inWorkersHands: workerBalances._sum.quantity ?? 0,",
+      "newStr": "      warehouseQuantity: warehouseBalances.reduce((s, b) => s + b.quantity, 0),\n      warehouseFiltered: warehouseBalances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0,\n      warehouseSpring: warehouseBalances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0,\n      inWorkersHands: workerBalances.reduce((s, b) => s + (b._sum.quantity ?? 0), 0),\n      inWorkersHandsFiltered: workerBalances.find((b) => b.waterType === WaterType.FILTERED)?._sum.quantity ?? 0,\n      inWorkersHandsSpring: workerBalances.find((b) => b.waterType === WaterType.SPRING)?._sum.quantity ?? 0,"
+    }
+  ]
+}

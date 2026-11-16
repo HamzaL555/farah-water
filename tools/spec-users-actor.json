@@ -1,0 +1,13 @@
+{
+  "file": "backend/src/users/users.service.ts",
+  "reps": [
+    {
+      "oldStr": "import { Prisma, Role } from '@prisma/client';",
+      "newStr": "import { Prisma, Role, WorkerType } from '@prisma/client';"
+    },
+    {
+      "oldStr": "export interface Actor {\n  id: string;\n  role: Role;\n  fullName: string;\n}\n\n/** Only digits, optional leading +, 7-20 chars. */",
+      "newStr": "export interface Actor {\n  id: string;\n  role: Role;\n  fullName: string;\n  workerType?: WorkerType | null;\n}\n\n/** Only digits, optional leading +, 7-20 chars. */"
+    }
+  ]
+}

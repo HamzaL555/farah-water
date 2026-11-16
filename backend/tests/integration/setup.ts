@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import supertest from 'supertest';
 import { createApp } from '../../src/app';
 import { prisma } from '../../src/prisma';
-import { Role } from '@prisma/client';
+import { Role, WorkerType } from '@prisma/client';
 import { key } from '../helpers';
 import { assertSafeTestDatabase } from '../helpers/test-db-guard';
 
@@ -35,11 +35,13 @@ export const fx: { admin?: UserFixture; worker?: UserFixture; worker2?: UserFixt
 
 /** Tables in dependency order. TRUNCATE bypasses the per-row DELETE triggers. */
 const TABLES = [
+  'notifications',
   'audit_logs',
   'inventory_transactions',
   'inventory_balances',
   'debt_adjustments',
   'payments',
+  'delivery_corrections',
   'deliveries',
   'customers',
   'login_attempts',
@@ -57,21 +59,33 @@ export async function resetDb(): Promise<void> {
 /** Clears transactional state between tests but keeps the user fixtures. */
 export async function resetTransactionalData(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE "audit_logs", "inventory_transactions", "inventory_balances", "debt_adjustments", "payments", "deliveries", "customers" RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE "notifications", "audit_logs", "inventory_transactions", "inventory_balances", "debt_adjustments", "payments", "delivery_corrections", "deliveries", "customers" RESTART IDENTITY CASCADE;`,
   );
+  // The balance table is keyed by water type as well, so seed both anbar
+  // buckets rather than the pre-split "WAREHOUSE" row. Otherwise a stray
+  // zero row could shadow the real total when the summary groups by water type.
   await prisma.$executeRaw`
-    INSERT INTO inventory_balances ("key", scope, "workerId", quantity, "updatedAt")
-    VALUES ('WAREHOUSE', 'WAREHOUSE'::"BalanceScope", NULL, 0, NOW())
+    INSERT INTO inventory_balances ("key", scope, "workerId", "waterType", quantity, "updatedAt")
+    VALUES
+      ('WAREHOUSE:FILTERED', 'WAREHOUSE'::"BalanceScope", NULL, 'FILTERED'::"WaterType", 0, NOW()),
+      ('WAREHOUSE:SPRING', 'WAREHOUSE'::"BalanceScope", NULL, 'SPRING'::"WaterType", 0, NOW())
     ON CONFLICT ("key") DO NOTHING
   `;
 }
 
-async function createUser(fullName: string, username: string, role: Role, password: string) {
+async function createUser(
+  fullName: string,
+  username: string,
+  role: Role,
+  password: string,
+  workerType?: WorkerType,
+) {
   return prisma.user.create({
     data: {
       fullName,
       username,
       role,
+      workerType,
       passwordHash: await bcrypt.hash(password, ROUNDS),
       isActive: true,
       mustChangePassword: false,
@@ -87,7 +101,7 @@ beforeAll(async () => {
   await resetDb();
 
   const admin = await createUser('Test Admin', 'admin', Role.ADMIN, ADMIN_PWD);
-  const worker = await createUser('Test Worker', 'worker', Role.WORKER, WORKER_PWD);
+  const worker = await createUser('Test Worker', 'worker', Role.WORKER, WORKER_PWD, WorkerType.WAREHOUSE_KEEPER);
   const worker2 = await createUser('Other Worker', 'worker2', Role.WORKER, WORKER_PWD);
 
   const [adminRes, workerRes, worker2Res] = await Promise.all([
@@ -114,20 +128,26 @@ export const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 // ------------------------------ call helpers -------------------------------
 
 /**
- * The warehouse is the worker's to run, so both of these post as the worker.
+ * Stock-in is run by the anbardar (the keeper fixture).
  *
- * The parameters still read as adminToken/issueTo because that is who used to
- * call them, and renaming every call site would bury the actual change: the
- * worker token is fetched from the fixture inside, and the named parameters are
- * ignored.
+ * The parameter still reads as `_callerToken` because that is who used to call
+ * it; the helper fetches the keeper token from the fixture inside.
  */
 const workerTokenOf = () => fx.worker!.token;
 
 export const stockIn = (_callerToken: string, bottleCount: number, note = 'test') =>
-  api.post('/api/v1/inventory/stock-in').set(auth(workerTokenOf())).send({ bottleCount, note });
+  api.post('/api/v1/inventory/stock-in').set(auth(workerTokenOf())).send({ bottleCount, waterType: 'FILTERED', note });
 
-export const issueStock = (_callerToken: string, _workerId: string, bottleCount: number, note = 'test issue') =>
-  api.post('/api/v1/inventory/issue').set(auth(workerTokenOf())).send({ bottleCount, note });
+/**
+ * Hands warehouse stock to a named worker, the way the anbardar does in the
+ * product. A regular worker cannot take stock directly any more, so tests that
+ * need worker2 to hold bottles must go through /distribute.
+ */
+export const issueStock = (_callerToken: string, workerId: string, bottleCount: number, note = 'test issue') =>
+  api
+    .post('/api/v1/inventory/distribute')
+    .set(auth(workerTokenOf()))
+    .send({ bottleCount, waterType: 'FILTERED', note, workerId });
 
 export async function makeCustomer(workerToken: string, name = 'Test Customer', address = 'Test Street 1') {
   const res = await api

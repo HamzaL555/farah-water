@@ -1,8 +1,8 @@
-import { DeliveryStatus, InventoryTxType, Prisma, Role } from '@prisma/client';
+import { DeliveryStatus, InventoryTxType, Prisma, Role, WaterType } from '@prisma/client';
 import { prisma } from '../prisma';
 import { resolveRange, DateRangePreset, startOfLocalDay, endOfLocalDay, startOfLocalMonth, endOfLocalMonth } from '../common/utils/date';
 import { serializeDelivery } from '../common/utils/serialize';
-import { WAREHOUSE_KEY, workerKey } from '../inventory/inventory.service';
+import { warehouseKey, workerKey } from '../inventory/inventory.service';
 import { Actor } from '../users/users.service';
 
 const D = (v: Prisma.Decimal | null | undefined) => Number((v ?? new Prisma.Decimal(0)).toFixed(2));
@@ -39,7 +39,7 @@ export async function workerDashboard(actor: Actor) {
       where: { workerId: actor.id, debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED } },
       _sum: { debtAmount: true },
     }),
-    prisma.inventoryBalance.findUnique({ where: { key: workerKey(actor.id) }, select: { quantity: true } }),
+    prisma.inventoryBalance.findMany({ where: { workerId: actor.id, scope: 'WORKER' }, select: { waterType: true, quantity: true } }),
     prisma.delivery.findMany({
       where: { workerId: actor.id },
       orderBy: { deliveredAt: 'desc' },
@@ -51,6 +51,10 @@ export async function workerDashboard(actor: Actor) {
     }),
   ]);
 
+  const stockTotal = stock.reduce((s, b) => s + b.quantity, 0);
+  const stockFiltered = stock.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;
+  const stockSpring = stock.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;
+
   return {
     todayBottles: todayDelAgg._sum.bottleCount ?? 0,
     todayDeliveries: todayDelAgg._count._all,
@@ -59,7 +63,11 @@ export async function workerDashboard(actor: Actor) {
     todayCollected: D(todayPayAgg._sum.amount),
     outstandingDeliveryCount: openDebts,
     outstandingDebt: D(myDebt._sum.debtAmount),
-    stockInHand: stock?.quantity ?? 0,
+    stockInHand: stockTotal,
+    // Bulaq and Filtr never share a balance; the total is only a summary.
+    stockByType: { filtered: stockFiltered, spring: stockSpring, total: stockTotal },
+    stockFiltered,
+    stockSpring,
     recentDeliveries: myDeliveries.map(serializeDelivery),
   };
 }
@@ -82,7 +90,7 @@ export async function adminDashboard(query: RangeQuery) {
     start || end ? { [field]: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {};
 
   const [
-    warehouse,
+    warehouseBalances,
     workerBalances,
     todayInbound,
     todayIssued,
@@ -99,14 +107,14 @@ export async function adminDashboard(query: RangeQuery) {
     allTimeBottles,
     rangeDeliveries,
   ] = await Promise.all([
-    prisma.inventoryBalance.findUnique({ where: { key: WAREHOUSE_KEY }, select: { quantity: true } }),
-    prisma.inventoryBalance.aggregate({ where: { scope: 'WORKER' }, _sum: { quantity: true } }),
+    prisma.inventoryBalance.findMany({ where: { scope: 'WAREHOUSE' }, select: { waterType: true, quantity: true } }),
+    prisma.inventoryBalance.groupBy({ by: ['waterType'], where: { scope: 'WORKER' }, _sum: { quantity: true } }),
     prisma.inventoryTransaction.aggregate({
-      where: { balanceKey: WAREHOUSE_KEY, type: InventoryTxType.INBOUND, occurredAt: { gte: dayStart, lt: dayEnd } },
+      where: { balanceKey: { startsWith: 'WAREHOUSE' }, type: InventoryTxType.INBOUND, occurredAt: { gte: dayStart, lt: dayEnd } },
       _sum: { bottleCount: true },
     }),
     prisma.inventoryTransaction.aggregate({
-      where: { balanceKey: WAREHOUSE_KEY, type: InventoryTxType.ISSUE_TO_WORKER, occurredAt: { gte: dayStart, lt: dayEnd } },
+      where: { balanceKey: { startsWith: 'WAREHOUSE' }, type: InventoryTxType.ISSUE_TO_WORKER, occurredAt: { gte: dayStart, lt: dayEnd } },
       _sum: { bottleCount: true },
     }),
     prisma.delivery.aggregate({
@@ -143,8 +151,12 @@ export async function adminDashboard(query: RangeQuery) {
     inventory: {
       todayInbound: todayInbound._sum.bottleCount ?? 0,
       todayIssuedToWorkers: todayIssued._sum.bottleCount ?? 0,
-      warehouseQuantity: warehouse?.quantity ?? 0,
-      inWorkersHands: workerBalances._sum.quantity ?? 0,
+      warehouseQuantity: warehouseBalances.reduce((s, b) => s + b.quantity, 0),
+      warehouseFiltered: warehouseBalances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0,
+      warehouseSpring: warehouseBalances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0,
+      inWorkersHands: workerBalances.reduce((s, b) => s + (b._sum.quantity ?? 0), 0),
+      inWorkersHandsFiltered: workerBalances.find((b) => b.waterType === WaterType.FILTERED)?._sum.quantity ?? 0,
+      inWorkersHandsSpring: workerBalances.find((b) => b.waterType === WaterType.SPRING)?._sum.quantity ?? 0,
       damagedInRange: todayDamaged._sum.bottleCount ?? 0,
       lostInRange: todayLost._sum.bottleCount ?? 0,
     },
