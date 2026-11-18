@@ -2,10 +2,6 @@ import { NextFunction, Request, Response } from 'express';
 import { ZodError, ZodType } from 'zod';
 import { AppError } from '../utils/errors';
 
-/**
- * Zod request validation. `req.body` is replaced by the parsed (coerced,
- * stripped) value so handlers only ever see trusted, typed data.
- */
 export function validate(
   schema: ZodType,
   source: 'body' | 'query' | 'params' = 'body',
@@ -17,7 +13,6 @@ export function validate(
       return next(new AppError(422, 'Məlumatlar düzgün deyil.', 'VALIDATION_ERROR', details));
     }
     if (source === 'query') {
-      // Express 4 exposes req.query as a getter-only property on some versions.
       Object.defineProperty(req, 'query', { value: result.data, writable: true, configurable: true });
     } else {
       req[source] = result.data;

@@ -95,6 +95,23 @@
            String(d.getUTCMinutes()).padStart(2, '0');
   }
 
+  /**
+   * DD.MM.YYYY HH:MM:SS in Baku time.
+   *
+   * Warehouse history and admin notifications promise the exact second an
+   * operation happened, so this variant is used wherever an audit trail is on
+   * screen. It is still rendered from the server timestamp, never the device.
+   */
+  function dateTimeFull(v) {
+    if (!v) return '—';
+    var d = baku(v);
+    if (!d) return '—';
+    return date(v) + ' ' +
+      String(d.getUTCHours()).padStart(2, '0') + ':' +
+      String(d.getUTCMinutes()).padStart(2, '0') + ':' +
+      String(d.getUTCSeconds()).padStart(2, '0');
+  }
+
   var DAY_NAMES = ['Bazar', 'Bazar ertəsi', 'Çərşənbə axşamı', 'Çərşənbə', 'Cümə axşamı', 'Cümə', 'Şənbə'];
 
   /**
@@ -170,14 +187,51 @@
 
   var TX_LABEL = {
     INBOUND: 'Anbara qəbul',
-    // The worker takes stock for themselves out of the warehouse; nobody
-    // hands it to them. The old label described a step that no longer exists.
-    ISSUE_TO_WORKER: 'Anbardan götürdü',
-    OUT_DELIVERY: 'Çatdırıldı',
+    ISSUE_TO_WORKER: 'İşçiyə verildi',
+    OUT_DELIVERY: 'Çatdırılmada istifadə',
     RETURN_TO_STOCK: 'Anbara qaytarıldı',
     DAMAGE: 'Zədələnmiş',
     LOSS: 'İtmiş',
     CORRECTION: 'Düzəliş',
+  };
+
+  var TX_ACTIONS = ['INBOUND', 'ISSUE_TO_WORKER', 'OUT_DELIVERY', 'RETURN_TO_STOCK', 'DAMAGE', 'LOSS'];
+
+  var WORKER_TYPE = {
+    WAREHOUSE_KEEPER: { label: 'Anbardar', cls: 'badge-info' },
+    REGULAR: { label: 'Adi işçi', cls: 'badge-muted' },
+  };
+
+  var DEPOSIT_TYPE = {
+    DEPOSIT_IN: { label: 'Depozit qəbul edildi', cls: 'badge-paid', sign: '+' },
+    DEPOSIT_OUT: { label: 'Depozit qaytarıldı', cls: 'badge-unpaid', sign: '−' },
+    ADJUSTMENT: { label: 'Düzəliş', cls: 'badge-warn', sign: '' },
+  };
+
+  var EXPENSE_CATEGORY = {
+    FUEL: 'Yanacaq',
+    SALARY: 'Əmək haqqı',
+    MAINTENANCE: 'Təmir',
+    RENT: 'İcarə',
+    UTILITIES: 'Kommunal',
+    SUPPLIES: 'Ləvazimat',
+    TRANSPORT: 'Nəqliyyat',
+    OTHER: 'Digər',
+  };
+
+  var PRICE_STATUS = {
+    PENDING: { label: 'Gözləyir', cls: 'badge-warn' },
+    APPROVED: { label: 'Təsdiqləndi', cls: 'badge-paid' },
+    REJECTED: { label: 'Rədd edildi', cls: 'badge-unpaid' },
+  };
+
+  var NOTIF_KIND = {
+    STOCK: { label: 'Anbar', cls: 'badge-info' },
+    DEPOSIT: { label: 'Depozit', cls: 'badge-paid' },
+    PRICE: { label: 'Qiymət', cls: 'badge-warn' },
+    EXPENSE: { label: 'Xərc', cls: 'badge-unpaid' },
+    BALANCE: { label: 'Balans', cls: 'badge-partial' },
+    DELIVERY: { label: 'Çatdırılma', cls: 'badge-filtered' },
   };
 
   // ----------------------------------------------------------- network --
@@ -290,9 +344,11 @@
     $('#shell').hidden = false;
     setDrawer(false);
     var who = $('#who');
+    var roleLabel = state.user.role === 'ADMIN'
+      ? 'administrator'
+      : (state.user.workerType === 'WAREHOUSE_KEEPER' ? 'anbardar' : 'adi işçi');
     who.innerHTML = '<strong>' + esc(state.user.fullName || '') + '</strong><br>' +
-                    esc(state.user.username || '') + ' · ' +
-                    (state.user.role === 'ADMIN' ? 'administrator' : 'işçi');
+                    esc(state.user.username || '') + ' · ' + esc(roleLabel);
     // Must run on every successful auth, not just at boot: before login
     // state.user is null, so a build there would hide every admin-only page.
     buildNav();
@@ -364,11 +420,19 @@
   var PAGES = [
     { id: 'dashboard', icon: '📊', label: 'Dashboard', roles: ['ADMIN'] },
     { id: 'workers',   icon: '👷', label: 'İşçilər',   roles: ['ADMIN'] },
-    { id: 'stock',     icon: '🏭', label: 'Anbar',     roles: ['ADMIN'] },
+    {
+      id: 'stock', icon: '🏭', label: 'Anbar', roles: ['ADMIN', 'WORKER'],
+      // Keeper or admin only: a regular worker can never open the anbar.
+      show: canManageWarehouse,
+    },
+    { id: 'notifications', icon: '🔔', label: 'Bildirişlər', roles: ['ADMIN'] },
     { id: 'mystock',   icon: '🧴', label: 'Bidonlarım', roles: ['WORKER'] },
     { id: 'customers', icon: '👥', label: 'Müştərilər', roles: ['ADMIN', 'WORKER'] },
+    { id: 'deposits',  icon: '💧', label: 'Depozitlər', roles: ['ADMIN'] },
     { id: 'deliveries',icon: '🚚', label: 'Çatdırılmalar', roles: ['ADMIN', 'WORKER'] },
     { id: 'debts',     icon: '⚠️', label: 'Borclar',   roles: ['ADMIN', 'WORKER'] },
+    { id: 'prices',    icon: '💵', label: 'Qiymətlər', roles: ['ADMIN', 'WORKER'] },
+    { id: 'expenses',  icon: '🧾', label: 'Xərclər',   roles: ['ADMIN'] },
     { id: 'revenue',   icon: '💰', label: 'Gəlirlər',  roles: ['ADMIN'] },
     { id: 'reports',   icon: '📈', label: 'Hesabat',   roles: ['ADMIN', 'WORKER'] },
     { id: 'audit',     icon: '🛡️', label: 'Audit',     roles: ['ADMIN'] },
@@ -379,12 +443,28 @@
     return state.user && state.user.role === 'ADMIN' ? 'ADMIN' : 'WORKER';
   }
 
+  /** Unread badge on the notifications item; silent when offline. */
+  function refreshNotifBadge() {
+    if (!isAdmin()) return;
+    api('GET', '/notifications/unread-count')
+      .then(function (d) {
+        var el = $('#notif-badge');
+        if (!el) return;
+        var n = d && d.count ? Number(d.count) : 0;
+        el.textContent = n > 99 ? '99+' : String(n);
+        el.hidden = n === 0;
+      })
+      .catch(function () { /* a badge is never worth a failed request banner */ });
+  }
+
   function buildNav() {
-    var r = role();
-    $('#nav').innerHTML = PAGES.filter(function (p) { return p.roles.indexOf(r) >= 0; })
-      .map(function (p) {
-        return '<a href="#" data-page="' + p.id + '">' + p.icon + ' ' + esc(p.label) + '</a>';
-      }).join('');
+    $('#nav').innerHTML = PAGES.filter(function (p) { return canOpen(p.id); }).map(function (p) {
+      var label = p.icon + ' ' + esc(p.label);
+      if (p.id === 'notifications') {
+        label += ' <span class="nav-badge" id="notif-badge" hidden></span>';
+      }
+      return '<a href="#" data-page="' + p.id + '">' + label + '</a>';
+    }).join('');
     $$('#nav a').forEach(function (a) {
       a.addEventListener('click', function (ev) {
         ev.preventDefault();
@@ -392,17 +472,21 @@
         navigate(a.dataset.page);
       });
     });
+    refreshNotifBadge();
   }
 
   /** Guards direct navigation to a page the current role must not open. */
   function canOpen(page) {
     var def = PAGES.filter(function (p) { return p.id === page; })[0];
     if (!def) return false;
+    if (def.show) return def.show();
     return def.roles.indexOf(role()) >= 0;
   }
 
   function navigate(page) {
-    if (!canOpen(page)) page = 'deliveries';
+    if (!canOpen(page)) {
+      page = isAdmin() ? 'dashboard' : (canManageWarehouse() ? 'stock' : 'mystock');
+    }
     state.route = page;
     if (location.hash.slice(1) !== page) location.hash = page;
     $$('#nav a').forEach(function (a) {
@@ -419,7 +503,10 @@
     lastSignature[page] = null;
     capture = [];
     render(page, view)
-      .then(function () { lastSignature[page] = signatureOf(page); })
+      .then(function () {
+        lastSignature[page] = signatureOf(page);
+        refreshNotifBadge();
+      })
       .catch(function (e) {
         view.innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>';
       });
@@ -489,9 +576,76 @@
       '</div>';
   }
 
+  /**
+   * A large, colour-coded water type card. Bulaq and Filtr never share one
+   * number: the whole point of the module is that they are separate stocks.
+   */
+  function waterCard(label, value, kind, unit) {
+    return '<div class="water-card ' + (kind || '') + '">' +
+      '<div class="water-card-label">' + esc(label) + '</div>' +
+      '<div class="water-card-value">' + esc(String(value == null ? 0 : value)) + '</div>' +
+      '<div class="water-card-unit">' + esc(unit || 'bidon') + '</div>' +
+      '</div>';
+  }
+
   function statusBadge(s) {
     var st = STATUS[s] || { label: s || '—', cls: 'badge-muted' };
     return '<span class="badge ' + st.cls + '">' + esc(st.label) + '</span>';
+  }
+
+  /** Bulaq and Filtr are visually distinct everywhere, never one grey label. */
+  function waterBadge(w) {
+    var label = WATER_FULL[w] || w || '—';
+    return '<span class="badge ' + (w === 'SPRING' ? 'badge-spring' : 'badge-filtered') + '">' +
+      esc(label) + '</span>';
+  }
+
+  function signedBadge(n) {
+    var v = Number(n) || 0;
+    return '<span class="badge ' + (v >= 0 ? 'badge-paid' : 'badge-unpaid') + '">' +
+      (v > 0 ? '+' : '') + v + '</span>';
+  }
+
+  function workerTypeBadge(t) {
+    var w = WORKER_TYPE[t] || { label: 'Təyin edilməyib', cls: 'badge-muted' };
+    return '<span class="badge ' + w.cls + '">' + esc(w.label) + '</span>';
+  }
+
+  /** True for an anbardar (warehouse keeper). */
+  function isKeeper() {
+    return Boolean(state.user && state.user.role === 'WORKER' &&
+      state.user.workerType === 'WAREHOUSE_KEEPER');
+  }
+
+  /** Admin can see the anbar; only the keeper (and admin) can open its page. */
+  function canManageWarehouse() {
+    return isAdmin() || isKeeper();
+  }
+
+  /** Reads the currently selected value of a .seg control. */
+  function segValue(selector) {
+    var on = $(selector + ' .seg-btn.is-on');
+    return on ? on.dataset.v : '';
+  }
+
+  /** Wires a .seg control so exactly one button is ever selected. */
+  function bindSeg(selector) {
+    var el = $(selector);
+    if (!el) return;
+    el.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('.seg-btn');
+      if (!btn) return;
+      $$(selector + ' .seg-btn').forEach(function (x) {
+        x.classList.toggle('is-on', x === btn);
+      });
+    });
+  }
+
+  function waterSeg(id, selected) {
+    return '<div class="seg" id="' + id + '">' +
+      '<button type="button" class="seg-btn' + (selected === 'SPRING' ? '' : ' is-on') + '" data-v="FILTERED">💧 Filtr suyu</button>' +
+      '<button type="button" class="seg-btn' + (selected === 'SPRING' ? ' is-on' : '') + '" data-v="SPRING">🏔️ Bulaq suyu</button>' +
+      '</div>';
   }
 
   function table(headers, rows, emptyText) {
@@ -620,6 +774,7 @@
     }
     window.scrollTo(0, y);
     flashLive('yeni məlumat');
+    refreshNotifBadge();
   }
 
   var refreshTimer = null;
@@ -658,10 +813,14 @@
     if (page === 'dashboard') return pageDashboard(view);
     if (page === 'workers') return pageWorkers(view);
     if (page === 'stock') return pageStock(view);
+    if (page === 'notifications') return pageNotifications(view);
     if (page === 'mystock') return pageMyStock(view);
     if (page === 'customers') return pageCustomers(view);
+    if (page === 'deposits') return pageDeposits(view);
     if (page === 'deliveries') return pageDeliveries(view);
     if (page === 'debts') return pageDebts(view);
+    if (page === 'prices') return pagePrices(view);
+    if (page === 'expenses') return pageExpenses(view);
     if (page === 'revenue') return pageRevenue(view);
     if (page === 'reports') return pageReports(view);
     if (page === 'audit') return pageAudit(view);
@@ -670,80 +829,66 @@
   }
 
   // --------------------------------------------------------- my stock ---
-  /** The worker's own bottles: the same actions the phone app offers. */
+  /**
+   * The worker's own bottles, per water type.
+   *
+   * A regular worker sees ONLY this: no warehouse total, no actions. The
+   * anbardar hands them stock through the Anbar page; a delivery spends it
+   * automatically. That is why this page never calls `/inventory/summary`.
+   */
   async function pageMyStock(view) {
     var s = await api('GET', '/inventory/my-stock');
-    var t = await api('GET', '/inventory/transactions?pageSize=25');
-    // The warehouse total, so the worker can see what is there to take. Read
-    // only - taking is a separate, explicit action.
-    var w = await api('GET', '/inventory/summary');
+    // Scope to this worker explicitly: a keeper sees the whole ledger on the
+    // Anbar page, but this page is about their OWN hands only.
+    var t = await api(
+      'GET',
+      '/inventory/transactions?pageSize=30&workerId=' + encodeURIComponent(state.user.id),
+    );
 
-    view.innerHTML =
-      '<div class="cards">' +
-        card('Əlimdəki bidonlar', String(s.quantity || 0), 'good') +
-        card('Anbarda', String(w.warehouseQuantity || 0)) +
-        card('Son yenilənmə', dateTime(s.updatedAt)) +
-      '</div>' +
-      '<div class="toolbar">' +
-        '<button class="btn btn-primary" id="mb-in">+ Anbara qəbul (yeni gələn)</button>' +
-        '<button class="btn btn-secondary" id="mb-take">→ Anbardan götür</button>' +
-        '<button class="btn btn-outline" id="mb-back">↩ Anbara qaytar</button>' +
-        '<button class="btn btn-outline" id="mb-wo">Zədələnmiş / itmiş</button>' +
-      '</div>' +
-      '<div class="alert alert-info">Yeni gələn bidonları sən qeyd edirsən və özün götürürsən. Admin yalnız baxır.</div>' +
-      panel('İnventar tarixçəsi', '', table(
-        [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Qeyd' }],
-        (t.items || []).map(function (x) {
-          return [
-            esc(TX_LABEL[x.type] || x.type),
-            '<span class="' + (x.signedCount > 0 ? 'badge badge-paid' : 'badge badge-unpaid') + '">' +
-              (x.signedCount > 0 ? '+' : '') + x.signedCount + '</span>',
-            dateTime(x.occurredAt),
-            esc(x.note || '—'),
-          ];
-        }), 'Hələ əməliyyat yoxdur.'), true);
+    var html = '<div class="wh-grid">' +
+      waterCard('Bulaq suyu', s.springQty, 'spring') +
+      waterCard('Filtr suyu', s.filteredQty, 'filtered') +
+      waterCard('Ümumi balans', s.totalQty, 'total') +
+      '</div>';
 
-    var stockDialog = function (title, mode, requireNote) {
-      // A write-off needs a type: DAMAGE and LOSS are different facts, and the
-      // worker must choose rather than default silently to one of them.
-      var typePicker = mode === 'wo'
-        ? '<label class="field"><span class="field-label">Növ</span><select id="b-type">' +
-          '<option value="DAMAGE">Zədələnmiş</option><option value="LOSS">İtmiş</option>' +
-          '</select></label>'
-        : '';
-      // Taking is bounded by what is actually in the warehouse; saying so here
-      // stops the round trip that would only come back as a 400.
-      var countHint = mode === 'take' ? 'Anbarda ' + w.warehouseQuantity + ' bidon var' : '';
-      openModal(title,
-        typePicker +
-        moneyField('b-count', 'Bidon sayı', '', countHint) +
-        (requireNote ? textField('b-note', 'Səbəb', '') : textField('b-note', 'Qeyd (istəyə bağlı)', '')),
-        [
-          { label: 'Ləğv et', kind: 'outline' },
-          { label: 'Təsdiqlə', kind: 'primary', onClick: function () {
-            var body = {
-              bottleCount: parseInt($('#b-count').value, 10) || 0,
-              note: $('#b-note').value.trim(),
-              idempotencyKey: idem(mode),
-            };
-            var call;
-            if (mode === 'in') call = api('POST', '/inventory/stock-in', body);
-            else if (mode === 'take') call = api('POST', '/inventory/issue', body);
-            else if (mode === 'return') call = api('POST', '/inventory/return', body);
-            else call = api('POST', '/inventory/write-off', Object.assign({ type: $('#b-type').value }, body));
-            return call.then(function (r) {
-              closeModal();
-              toast(title + ' · yeni qalıq: ' + r.newBalance + ' bidon', 'ok');
-              navigate('mystock');
-            });
-          } },
-        ]);
-    };
+    html += '<div class="alert alert-info">' +
+      (isKeeper()
+        ? 'Anbar əməliyyatlarını "Anbar" səhifəsindən aparırsınız. Burada yalnız şəxsi balansınız görünür.'
+        : 'Bidonları sizə anbardar təhvil verir. Çatdırılmada istifadə etdiyiniz bidonlar avtomatik balansınızdan çıxılır.') +
+      '</div>';
 
-    $('#mb-in').addEventListener('click', function () { stockDialog('Anbara qəbul', 'in', false); });
-    $('#mb-take').addEventListener('click', function () { stockDialog('Anbardan götür', 'take', false); });
-    $('#mb-back').addEventListener('click', function () { stockDialog('Anbara qaytar', 'return', false); });
-    $('#mb-wo').addEventListener('click', function () { stockDialog('Zədələnmiş / itmiş', 'wo', true); });
+    html += panel('Şəxsi bidon balansı', '', table(
+      [{ label: 'Su növü' }, { label: 'Qalan bidon', num: true }],
+      [
+        [waterBadge('SPRING'), String(s.springQty || 0)],
+        [waterBadge('FILTERED'), String(s.filteredQty || 0)],
+        ['<strong>Cəmi</strong>', '<strong>' + (s.totalQty || 0) + '</strong>'],
+      ], 'Balans yoxdur.'), true);
+
+    html += panel('Mənim inventar tarixçəm', '', table(
+      [
+        { label: 'Tarix / saat' }, { label: 'Su növü' }, { label: 'Əməliyyat' },
+        { label: 'Say', num: true }, { label: 'Balans' }, { label: 'Qeyd' },
+      ],
+      (t.items || []).map(function (x) {
+        return [
+          dateTimeFull(x.occurredAt),
+          waterBadge(x.waterType),
+          esc(TX_LABEL[x.type] || x.type),
+          signedBadge(x.signedCount),
+          balanceTransition(x),
+          esc(x.note || '—'),
+        ];
+      }), 'Hələ əməliyyat yoxdur.'), true);
+
+    view.innerHTML = html;
+  }
+
+  /** "200 → 180" for one ledger leg, or a dash for pre-migration rows. */
+  function balanceTransition(x) {
+    if (x.beforeBalance === null || x.beforeBalance === undefined ||
+        x.afterBalance === null || x.afterBalance === undefined) return '—';
+    return '<span class="mono">' + x.beforeBalance + ' → ' + x.afterBalance + '</span>';
   }
 
   // ----------------------------------------------------------- profile ---
@@ -790,11 +935,20 @@
   // --------------------------------------------------------- dashboard --
   async function pageDashboard(view) {
     var d = await api('GET', '/dashboard/admin');
+    // Separate Bulaq/Filtr numbers, not just one combined total.
+    var invSum = await api('GET', '/inventory/summary');
     var inv = d.inventory || {};
     var fin = d.finance || {};
     var del = d.deliveries || {};
+    var wh = invSum.warehouse || { filtered: 0, spring: 0, total: 0 };
 
-    var html = '<div class="cards">' +
+    var html = '<div class="wh-grid">' +
+      waterCard('Anbarda Bulaq', wh.spring, 'spring') +
+      waterCard('Anbarda Filtr', wh.filtered, 'filtered') +
+      waterCard('Anbarda cəmi', wh.total, 'total') +
+      '</div>';
+
+    html += '<div class="cards">' +
       card('Anbarda bidon', inv.warehouseQuantity || 0) +
       card('İşçilərdə', inv.inWorkersHands || 0) +
       card('Bu gün daxil olan', inv.todayInbound || 0, 'good') +
@@ -814,8 +968,34 @@
       card('Ümumi çatdırılan bidon', del.allTimeBottles || 0) +
       '</div>';
 
+    // Money split by water type. Revenue, expense and profit each keep Bulaq
+    // and Filtr apart; the overall total repeats them explicitly rather than
+    // inventing a third "mixed" figure. Deposits are held money, shown apart.
+    var rev = fin.revenueByWater || { filtered: 0, spring: 0, total: 0 };
+    var exp = fin.expensesByWater || { filtered: 0, spring: 0, shared: 0, total: 0 };
+    var profit = fin.profit || { filtered: 0, spring: 0, total: 0 };
+
+    html += panel('Su növü üzrə pul (seçilmiş dövr)', '',
+      table([
+        { label: 'Göstərici' }, { label: 'Filtr suyu', num: true },
+        { label: 'Bulaq suyu', num: true }, { label: 'Cəmi', num: true },
+      ], [
+        ['Gəlir (faktiki ödənişlər)', money(rev.filtered), money(rev.spring), '<strong>' + money(rev.total) + '</strong>'],
+        ['Xərc', money(exp.filtered), money(exp.spring), '<strong>' + money(exp.total) + '</strong>'],
+        ['Mənfəət', money(profit.filtered), money(profit.spring), '<strong>' + money(profit.total) + '</strong>'],
+      ], 'Məlumat yoxdur'), true);
+
+    html += '<div class="cards">' +
+      card('Ümumi gəlir', withMoney(rev.total || 0), 'good', 'yalnız real ödənişlər') +
+      card('Ümumi xərc', withMoney(exp.total || 0), 'bad', exp.shared ? money(exp.shared) + ' AZN ümumi' : '') +
+      card('Mənfəət', withMoney(profit.total || 0), profit.total >= 0 ? 'good' : 'bad') +
+      card('Depozitdə saxlanan', withMoney(fin.depositsHeld || 0), '', (fin.depositBottlesHeld || 0) + ' bidon') +
+      card('Gözləyən qiymət sorğusu', fin.pendingPriceRequests || 0, fin.pendingPriceRequests ? 'bad' : '') +
+      '</div>';
+
     view.innerHTML = html +
-      '<div class="alert alert-info">Göstəricilər yalnız faktiki ödənişlərdən hesablanır. Hesablanmış (faktura) məbləğ gəlir sayılmır.</div>';
+      '<div class="alert alert-info">Göstəricilər yalnız faktiki ödənişlərdən hesablanır. Hesablanmış (faktura) məbləğ gəlir sayılmır. ' +
+      'Müştəri depozitləri satış gəliri deyil — ayrıca saxlanılır.</div>';
   }
 
   // ----------------------------------------------------------- workers --
@@ -827,8 +1007,11 @@
         esc(u.fullName) + (u.isActive ? '' : ' <span class="badge badge-muted">deaktiv</span>'),
         esc(u.username),
         esc(u.phone || '—'),
+        workerTypeBadge(u.workerType),
         u.lastLoginAt ? dateTime(u.lastLoginAt) : '<span class="muted">heç girməyib</span>',
         '<div class="row-actions">' +
+          '<button class="btn btn-secondary btn-sm" data-act="type" data-id="' + u.id +
+            '" data-name="' + esc(u.fullName) + '" data-type="' + esc(u.workerType || '') + '">Növ</button>' +
           (u.isActive
             ? '<button class="btn btn-outline btn-sm" data-act="deact" data-id="' + u.id + '">Deaktiv et</button>'
             : '<button class="btn btn-secondary btn-sm" data-act="act" data-id="' + u.id + '">Aktivləşdir</button>') +
@@ -838,10 +1021,15 @@
     });
 
     view.innerHTML =
-      panel('İşçilər', '<button class="btn btn-primary btn-sm" id="add-worker">+ Yeni işçi</button>',
+      panel('İşçilər',
+        '<button class="btn btn-primary btn-sm" id="add-worker">+ Yeni işçi</button>',
+        '<div class="alert alert-info" style="margin:0 0 10px">' +
+          '<strong>Anbardar</strong> anbara mal qəbul edir, işçilərə bidon verir və anbardan səbəbli çıxarış edir. ' +
+          '<strong>Adi işçi</strong> yalnız öz balansını görür, anbara toxuna bilmir. Növü yalnız administrator təyin edir.' +
+        '</div>' +
         table([
           { label: 'Ad' }, { label: 'İstifadəçi adı' }, { label: 'Telefon' },
-          { label: 'Son giriş' }, { label: 'Əməliyyat', cls: 'actions' },
+          { label: 'Növ' }, { label: 'Son giriş' }, { label: 'Əməliyyat', cls: 'actions' },
         ], rows, 'Hələ işçi yoxdur. "Yeni işçi" düyməsi ilə başlayın.'), true);
 
     $('#add-worker').addEventListener('click', openWorkerForm);
@@ -852,8 +1040,30 @@
         if (b.dataset.act === 'deact') setActive(id, false, b);
         else if (b.dataset.act === 'act') setActive(id, true, b);
         else if (b.dataset.act === 'reset') resetPassword(id, b);
+        else if (b.dataset.act === 'type') openWorkerTypeForm(id, b.dataset.name, b.dataset.type);
       });
     });
+  }
+
+  async function openWorkerTypeForm(id, fullName, current) {
+    openModal('İşçi növü — ' + (fullName || ''),
+      '<label class="field"><span class="field-label">Növ</span>' +
+        '<select id="wt-type">' +
+          '<option value="REGULAR"' + (current === 'REGULAR' ? ' selected' : '') + '>Adi işçi</option>' +
+          '<option value="WAREHOUSE_KEEPER"' + (current === 'WAREHOUSE_KEEPER' ? ' selected' : '') + '>Anbardar</option>' +
+        '</select>' +
+      '</label>' +
+      '<div class="alert alert-info" style="margin:0">Yalnız anbardar anbar əməliyyatlarını apara bilər. ' +
+        'Adi işçi yalnız öz bidon balansını görür.</div>',
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Yadda saxla', kind: 'primary', onClick: async function () {
+          await api('PATCH', '/users/' + id, { workerType: $('#wt-type').value });
+          closeModal();
+          toast('İşçi növü yeniləndi.', 'ok');
+          navigate('workers');
+        } },
+      ]);
   }
 
   async function setActive(id, active, btn) {
@@ -891,6 +1101,13 @@
       textField('w-user', 'İstifadəçi adı', '') +
       textField('w-phone', 'Telefon', '', { type: 'tel' }) +
       textField('w-email', 'E-mail (istəyə bağlı)', '', { type: 'email' }) +
+      '<label class="field"><span class="field-label">İşçi növü</span>' +
+        '<select id="w-worker-type">' +
+          '<option value="REGULAR">Adi işçi — yalnız öz balansı</option>' +
+          '<option value="WAREHOUSE_KEEPER">Anbardar — anbar əməliyyatları</option>' +
+        '</select>' +
+        '<span class="field-label" style="margin-top:5px">Növü yalnız administrator təyin edir.</span>' +
+      '</label>' +
       // A password field, not just a note about one: the API accepts an
       // explicit password and the admin should be able to set one.
       '<label class="field"><span class="field-label">Şifrə</span>' +
@@ -917,13 +1134,21 @@
               phone: $('#w-phone').value.trim() || undefined,
               email: $('#w-email').value.trim() || undefined,
               password: pass || undefined,
+              workerType: $('#w-worker-type').value,
             };
             var d = await api('POST', '/users', body);
             closeModal();
+            var hasTemp = Boolean(d.temporaryPassword);
             openModal('İşçi yaradıldı',
-              '<div class="alert alert-ok">Bu şifrəni işçiyə verin. O, ilk girişdə dəyişmək məcbur olacaq.</div>' +
-              '<div style="font-size:20px;font-weight:700;text-align:center;padding:12px 0;font-family:monospace">' +
-              esc(d.temporaryPassword) + '</div>',
+              '<div class="alert alert-ok">' +
+                (hasTemp
+                  ? 'Bu şifrəni işçiyə verin. O, ilk girişdə dəyişmək məcbur olacaq.'
+                  : 'İşçi yaradıldı. Şifrə sizin təyin etdiyiniz şifrədir.') +
+              '</div>' +
+              (hasTemp
+                ? '<div style="font-size:20px;font-weight:700;text-align:center;padding:12px 0;font-family:monospace">' +
+                  esc(d.temporaryPassword) + '</div>'
+                : ''),
               [{ label: 'Bağla', kind: 'primary' }]);
             navigate('workers');
           },
@@ -938,79 +1163,477 @@
   }
 
   // ------------------------------------------------------------- stock --
+  /**
+   * Anbar: two separate water stocks, the handover form, per-worker holdings
+   * and a filtered, append-only history. Visible to the anbardar and the admin.
+   *
+   * Actions are hidden rather than shown-then-rejected: the anbardar conducts
+   * warehouse movements, the admin supervises and may hand stock to a worker.
+   */
+  var STOCK_FILTER = {
+    preset: 'last30days',
+    from: '',
+    to: '',
+    waterType: '',
+    type: '',
+    workerId: '',
+    createdById: '',
+  };
+
+  function workerTypeLabel(t) {
+    var w = WORKER_TYPE[t];
+    return w ? w.label : 'Adi işçi';
+  }
+
+  function stockQuery(f) {
+    var parts = ['pageSize=100'];
+    if (f.from || f.to) {
+      if (f.from) parts.push('from=' + encodeURIComponent(f.from));
+      if (f.to) parts.push('to=' + encodeURIComponent(f.to));
+    } else {
+      parts.push('preset=' + encodeURIComponent(f.preset || 'last30days'));
+    }
+    if (f.waterType) parts.push('waterType=' + encodeURIComponent(f.waterType));
+    if (f.type) parts.push('type=' + encodeURIComponent(f.type));
+    if (f.workerId) parts.push('workerId=' + encodeURIComponent(f.workerId));
+    if (f.createdById) parts.push('createdById=' + encodeURIComponent(f.createdById));
+    return parts.join('&');
+  }
+
+  /** "200 → 180" for the warehouse leg of a movement. */
+  function warehouseTransition(x) {
+    if (!x || String(x.balanceKey || '').indexOf('WAREHOUSE') !== 0) return '—';
+    if (x.beforeBalance === null || x.beforeBalance === undefined ||
+        x.afterBalance === null || x.afterBalance === undefined) return '—';
+    return '<span class="mono">' + x.beforeBalance + ' → ' + x.afterBalance + '</span>';
+  }
+
+  /** Which way the stock moved, from the warehouse's point of view. */
+  function txMovement(x) {
+    switch (x.type) {
+      case 'INBOUND': return { label: 'Anbara qəbul', sign: 1 };
+      case 'ISSUE_TO_WORKER': return { label: 'İşçiyə verildi', sign: -1 };
+      case 'RETURN_TO_STOCK': return { label: 'Anbara qaytarıldı', sign: 1 };
+      case 'OUT_DELIVERY': return { label: 'Çatdırılmada istifadə', sign: -1 };
+      case 'DAMAGE': return { label: 'Zədələnmiş', sign: -1 };
+      case 'LOSS': return { label: 'İtmiş', sign: -1 };
+      case 'CORRECTION': return { label: 'Düzəliş', sign: x.signedCount >= 0 ? 1 : -1 };
+      default: return { label: TX_LABEL[x.type] || x.type, sign: x.signedCount >= 0 ? 1 : -1 };
+    }
+  }
+
+  /**
+   * A handover writes TWO ledger rows (warehouse -N, worker +N) sharing one
+   * reference. The anbar screen must not show the same event twice, so the
+   * legs are folded into one row that keeps the warehouse leg's balances.
+   */
+  function collapseTransactions(items) {
+    var map = {};
+    var order = [];
+    (items || []).forEach(function (x) {
+      var base = String(x.reference || x.id).replace(/:cp$/, '');
+      var cur = map[base];
+      if (!cur) {
+        cur = Object.assign({}, x, { reference: base });
+        map[base] = cur;
+        order.push(base);
+      }
+      if (!cur.workerName && x.workerName) cur.workerName = x.workerName;
+      if (!cur.note && x.note) cur.note = x.note;
+      if (String(x.balanceKey || '').indexOf('WAREHOUSE') === 0) {
+        cur.balanceKey = x.balanceKey;
+        cur.beforeBalance = x.beforeBalance;
+        cur.afterBalance = x.afterBalance;
+      }
+    });
+    return order.map(function (k) { return map[k]; });
+  }
+
   async function pageStock(view) {
     var s = await api('GET', '/inventory/summary');
-    var t = await api('GET', '/inventory/transactions?pageSize=25');
+    var t = await api('GET', '/inventory/transactions?' + stockQuery(STOCK_FILTER));
 
-    // Read-only: the worker receives, takes and returns stock; the admin watches
-    // what came in and how much went out.
-    var html = '<div class="cards">' +
-      card('Anbarda qalan', s.warehouseQuantity || 0, 'good') +
-      card('İşçilərdə', s.inWorkersHands || 0) +
-      card('Sistemdə cəmi', s.totalSystemQuantity || 0) +
+    var w = s.warehouse || { filtered: 0, spring: 0, total: 0 };
+    var inbound = s.inbound || { filtered: 0, spring: 0, total: 0 };
+    var outbound = s.outbound || { filtered: 0, spring: 0, total: 0 };
+    var issued = s.issuedToWorkers || { filtered: 0, spring: 0, total: 0 };
+    var returned = s.returned || { filtered: 0, spring: 0, total: 0 };
+    var workers = s.workers || [];
+
+    var inWorkersSpring = workers.reduce(function (a, x) { return a + (x.springQty || 0); }, 0);
+    var inWorkersFiltered = workers.reduce(function (a, x) { return a + (x.filteredQty || 0); }, 0);
+
+    var html = '<div class="wh-grid">' +
+      waterCard('Bulaq suyu', w.spring, 'spring') +
+      waterCard('Filtr suyu', w.filtered, 'filtered') +
+      waterCard('Anbarda cəmi', w.total, 'total') +
+      '</div>';
+
+    html += '<div class="cards stats-row">' +
       card('Bu gün daxil', s.todayInbound || 0, 'good') +
       card('Bu gün çıxış', s.todayOutbound || 0, 'bad') +
+      card('İşçilərdə cəmi', s.inWorkersHands || 0) +
+      card('Sistemdə cəmi', s.totalSystemQuantity || 0) +
       card('Zədələnmiş', s.damagedTotal || 0, 'bad') +
       card('İtmiş', s.lostTotal || 0, 'bad') +
       '</div>';
 
+    var actions = '';
+    if (isKeeper()) {
+      actions += '<button class="btn btn-primary" id="wh-in">+ Anbara qəbul</button>';
+    }
+    actions += '<button class="btn btn-secondary" id="wh-dist">→ İşçiyə bidon ver</button>';
+    if (isKeeper()) {
+      actions += '<button class="btn btn-secondary" id="wh-ret">← İşçidən qaytarma</button>';
+      actions += '<button class="btn btn-danger" id="wh-out">− Anbardan çıxar</button>';
+    }
+    html += '<div class="toolbar">' + actions + '</div>';
+
     html += '<div class="alert alert-info">' +
-        'Anbarı işçi idarə edir: yeni gələn bidonları o qeyd edir və özü götürür. ' +
-        'Burada hər götürmənin kim tərəfindən və nə qədər edildiyi görünür.' +
+      (isKeeper()
+        ? 'Bulaq və Filtr ayrı-ayrı saxlanılır. Anbar əməliyyatlarının hər biri səbəb, say və dəqiq vaxt ilə tarixçəyə yazılır; heç bir qeyd silinmir.'
+        : 'Siz nəzarətçisiniz: anbar əməliyyatlarını anbardar aparır. İşçiyə bidon vermək üçün aşağıdaki düyməni istifadə edə bilərsiniz.') +
       '</div>';
 
-    var workerRows = (s.workers || []).map(function (w) {
-      return [esc(w.workerName), esc(w.username),
-        w.isActive ? '' : '<span class="badge badge-muted">deaktiv</span>',
-        w.quantity === 0 ? '<span class="badge badge-unpaid">0</span>' : String(w.quantity)];
-    });
-    html += panel('İşçilərin əlində — indi nə qədər qalıb', '', table(
-      [{ label: 'Ad' }, { label: 'İstifadəçi adı' }, { label: 'Vəziyyət' }, { label: 'Qalan bidon', num: true }],
-      workerRows, 'Hələ heç bir işçi yoxdur.'), true);
+    html += panel('Su növləri üzrə hərəkət', '', table(
+      [
+        { label: 'Su növü' }, { label: 'Anbarda', num: true }, { label: 'Daxil olub', num: true },
+        { label: 'Çıxıb', num: true }, { label: 'İşçilərə verilib', num: true },
+        { label: 'Qaytarılıb', num: true }, { label: 'İşçilərdə', num: true },
+      ],
+      [
+        [waterBadge('SPRING'), String(w.spring), String(inbound.spring), String(outbound.spring),
+          String(issued.spring), String(returned.spring), String(inWorkersSpring)],
+        [waterBadge('FILTERED'), String(w.filtered), String(inbound.filtered), String(outbound.filtered),
+          String(issued.filtered), String(returned.filtered), String(inWorkersFiltered)],
+        ['<strong>Cəmi</strong>', '<strong>' + w.total + '</strong>', '<strong>' + inbound.total + '</strong>',
+          '<strong>' + outbound.total + '</strong>', '<strong>' + issued.total + '</strong>',
+          '<strong>' + returned.total + '</strong>', '<strong>' + (inWorkersSpring + inWorkersFiltered) + '</strong>'],
+      ], 'Hələ hərəkət yoxdur.'), true);
 
-    // A take writes two legs - one out of the warehouse, one into the worker's
-    // hands - and both carry the same actor. Naming the worker in the row is
-    // what makes "who took what" answerable without reading the ledger.
-    var txRows = (t.items || []).map(function (x) {
-      var who = x.workerName || x.createdByName || '—';
-      var by = esc(who) + (x.createdByRole === 'WORKER' ? ' <span class="badge badge-muted">işçi</span>' : '');
-      var movement = esc(TX_LABEL[x.type] || x.type);
-      if (x.type === 'ISSUE_TO_WORKER' && x.balanceKey === 'WAREHOUSE') {
-        movement = 'Anbardan çıxdı';
-      } else if (x.type === 'ISSUE_TO_WORKER') {
-        movement = 'İşçiyə düşdü';
-      }
+    var workerRows = workers.map(function (x) {
       return [
-        movement,
-        '<span class="' + (x.signedCount > 0 ? 'badge badge-paid' : 'badge badge-unpaid') + '">' +
-          (x.signedCount > 0 ? '+' : '') + x.signedCount + '</span>',
-        dateTime(x.occurredAt),
-        by,
+        esc(x.workerName) + (x.isActive ? '' : ' <span class="badge badge-muted">deaktiv</span>'),
+        workerTypeBadge(x.workerType),
+        String(x.springQty || 0),
+        String(x.filteredQty || 0),
+        '<strong>' + (x.totalQty || 0) + '</strong>',
+      ];
+    });
+    html += panel('İşçilərin əlində', '', table(
+      [
+        { label: 'Ad' }, { label: 'Növ' },
+        { label: 'Bulaq', num: true }, { label: 'Filtr', num: true }, { label: 'Ümumi', num: true },
+      ], workerRows, 'Hələ heç bir işçi yoxdur.'), true);
+
+    // ---- history + filters ------------------------------------------------
+    var workerOptions = '<option value="">Bütün işçilər</option>' + workers.map(function (x) {
+      return '<option value="' + x.workerId + '"' + (STOCK_FILTER.workerId === x.workerId ? ' selected' : '') + '>' +
+        esc(x.workerName) + '</option>';
+    }).join('');
+
+    // The anbardar list is derived from the history itself: a keeper cannot
+    // call /users, and this is the only place the actor names are needed.
+    var actorMap = {};
+    (t.items || []).forEach(function (x) {
+      if (x.createdById && x.createdByName) actorMap[x.createdById] = x.createdByName;
+    });
+    var actorOptions = '<option value="">Bütün anbardarlar</option>' + Object.keys(actorMap).map(function (id) {
+      return '<option value="' + id + '"' + (STOCK_FILTER.createdById === id ? ' selected' : '') + '>' +
+        esc(actorMap[id]) + '</option>';
+    }).join('');
+
+    var filters =
+      '<div class="toolbar filter-bar">' +
+        '<select id="sf-preset">' +
+          '<option value="today"' + (STOCK_FILTER.preset === 'today' ? ' selected' : '') + '>Bu gün</option>' +
+          '<option value="yesterday"' + (STOCK_FILTER.preset === 'yesterday' ? ' selected' : '') + '>Dünən</option>' +
+          '<option value="last7days"' + (STOCK_FILTER.preset === 'last7days' ? ' selected' : '') + '>Son 7 gün</option>' +
+          '<option value="last30days"' + (STOCK_FILTER.preset === 'last30days' ? ' selected' : '') + '>Son 30 gün</option>' +
+          '<option value="thisMonth"' + (STOCK_FILTER.preset === 'thisMonth' ? ' selected' : '') + '>Bu ay</option>' +
+          '<option value="lastMonth"' + (STOCK_FILTER.preset === 'lastMonth' ? ' selected' : '') + '>Keçən ay</option>' +
+          '<option value="thisYear"' + (STOCK_FILTER.preset === 'thisYear' ? ' selected' : '') + '>Bu il</option>' +
+          '<option value="all"' + (STOCK_FILTER.preset === 'all' ? ' selected' : '') + '>Bütün tarixçə</option>' +
+        '</select>' +
+        '<input id="sf-from" type="text" inputmode="numeric" maxlength="10" placeholder="Başlanğıc GG.AA.YYYY" value="' + esc(STOCK_FILTER.from ? date(STOCK_FILTER.from) : '') + '">' +
+        '<input id="sf-to" type="text" inputmode="numeric" maxlength="10" placeholder="Son GG.AA.YYYY" value="' + esc(STOCK_FILTER.to ? date(STOCK_FILTER.to) : '') + '">' +
+        '<select id="sf-water">' +
+          '<option value="">Bütün su növləri</option>' +
+          '<option value="SPRING"' + (STOCK_FILTER.waterType === 'SPRING' ? ' selected' : '') + '>Bulaq suyu</option>' +
+          '<option value="FILTERED"' + (STOCK_FILTER.waterType === 'FILTERED' ? ' selected' : '') + '>Filtr suyu</option>' +
+        '</select>' +
+        '<select id="sf-type">' +
+          '<option value="">Bütün əməliyyatlar</option>' +
+          TX_ACTIONS.map(function (a) {
+            return '<option value="' + a + '"' + (STOCK_FILTER.type === a ? ' selected' : '') + '>' +
+              esc(TX_LABEL[a]) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<select id="sf-worker">' + workerOptions + '</select>' +
+        '<select id="sf-actor">' + actorOptions + '</select>' +
+        '<button class="btn btn-primary" id="sf-go">Filtr et</button>' +
+        '<button class="btn btn-outline" id="sf-reset">Sıfırla</button>' +
+      '</div>';
+
+    var txRows = collapseTransactions(t.items).map(function (x) {
+      var mv = txMovement(x);
+      var qty = mv.sign * (x.bottleCount || 0);
+      return [
+        dateTimeFull(x.occurredAt),
+        waterBadge(x.waterType),
+        esc(mv.label),
+        signedBadge(qty),
+        warehouseTransition(x),
+        esc(x.workerName || '—'),
+        esc(x.createdByName || '—') +
+          (x.createdByRole === 'WORKER' ? ' <span class="badge badge-muted">anbardar</span>' : ''),
         esc(x.note || '—'),
       ];
     });
-    html += panel('Kim nə qədər götürdü / qaytardı', '', table(
-      [{ label: 'Əməliyyat' }, { label: 'Say' }, { label: 'Tarix' }, { label: 'Kim' }, { label: 'Qeyd' }],
-      txRows, 'Hələ əməliyyat yoxdur.'), true);
+
+    html += panel('Anbar tarixçəsi',
+      '<span class="muted small">' + ((t.items || []).length ? collapseTransactions(t.items).length : 0) +
+        ' əməliyyat · dəqiq saniyəyə qədər</span>',
+      filters + table(
+        [
+          { label: 'Tarix / saat' }, { label: 'Su növü' }, { label: 'Əməliyyat' },
+          { label: 'Say', num: true }, { label: 'Anbar balansı' }, { label: 'Kimə' },
+          { label: 'Kim etdi' }, { label: 'Səbəb / qeyd' },
+        ], txRows, 'Seçilmiş filtrlər üzrə əməliyyat yoxdur.'));
 
     view.innerHTML = html;
+
+    // ---- dialogs ----------------------------------------------------------
+    function openInbound() {
+      // One key for this dialog: a retry after a network error reuses it, so the
+      // server recognises the replay instead of adding stock twice.
+      var opKey = idem('in');
+      openModal('Anbara qəbul',
+        '<div class="field"><span class="field-label">Su növü</span>' + waterSeg('wh-water', 'FILTERED') + '</div>' +
+        '<label class="field"><span class="field-label">Bidon sayı</span>' +
+          '<input id="wh-count" type="text" inputmode="numeric" placeholder="0">' +
+        '</label>' +
+        textField('wh-note', 'Qeyd (istəyə bağlı)', ''),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Qəbul et', kind: 'primary', onClick: function () {
+            var count = parseInt($('#wh-count').value, 10) || 0;
+            if (count <= 0) throw new Error('Bidon sayı müsbət tam ədəd olmalıdır.');
+            var water = segValue('#wh-water');
+            if (!water) throw new Error('Su növünü seçin.');
+            return api('POST', '/inventory/stock-in', {
+              waterType: water,
+              bottleCount: count,
+              note: $('#wh-note').value.trim() || undefined,
+              idempotencyKey: opKey,
+            }).then(function () {
+              closeModal();
+              toast('Anbara qəbul edildi.', 'ok');
+              navigate('stock');
+            });
+          } },
+        ]);
+      bindSeg('#wh-water');
+    }
+
+    function openDistribute() {
+      var opKey = idem('dist');
+      var options = workers.filter(function (x) { return x.isActive; }).map(function (x) {
+        return '<option value="' + x.workerId + '">' + esc(x.workerName) +
+          ' — ' + esc(workerTypeLabel(x.workerType)) + '</option>';
+      }).join('');
+      if (!options) {
+        toast('Aktiv işçi yoxdur. Əvvəlcə işçi yaradın.', 'err');
+        return;
+      }
+      openModal('İşçiyə bidon ver',
+        '<label class="field"><span class="field-label">İşçi</span>' +
+          '<select id="wh-worker">' + options + '</select>' +
+        '</label>' +
+        '<div class="field"><span class="field-label">Su növü</span>' + waterSeg('wh-water', 'FILTERED') + '</div>' +
+        '<label class="field"><span class="field-label">Bidon sayı</span>' +
+          '<input id="wh-count" type="text" inputmode="numeric" placeholder="0">' +
+          '<span class="field-label" style="margin-top:4px">Anbarda: Bulaq ' + w.spring + ' · Filtr ' + w.filtered + '</span>' +
+        '</label>' +
+        textField('wh-note', 'Qeyd (istəyə bağlı)', ''),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Ver', kind: 'primary', onClick: function () {
+            var count = parseInt($('#wh-count').value, 10) || 0;
+            if (count <= 0) throw new Error('Bidon sayı müsbət tam ədəd olmalıdır.');
+            var water = segValue('#wh-water');
+            if (!water) throw new Error('Su növünü seçin.');
+            return api('POST', '/inventory/distribute', {
+              workerId: $('#wh-worker').value,
+              waterType: water,
+              bottleCount: count,
+              note: $('#wh-note').value.trim() || undefined,
+              idempotencyKey: opKey,
+            }).then(function (r) {
+              closeModal();
+              toast('İşçiyə verildi · anbarda qalan: ' + r.afterBalance + ' bidon', 'ok');
+              navigate('stock');
+            });
+          } },
+        ]);
+      bindSeg('#wh-water');
+    }
+
+    function openReturn() {
+      var opKey = idem('ret');
+      var options = workers.filter(function (x) { return x.isActive; }).map(function (x) {
+        return '<option value="' + x.workerId + '">' + esc(x.workerName) +
+          ' — ' + esc(workerTypeLabel(x.workerType)) + '</option>';
+      }).join('');
+      if (!options) {
+        toast('Aktiv işçi yoxdur.', 'err');
+        return;
+      }
+      openModal('İşçidən qaytarma',
+        '<label class="field"><span class="field-label">İşçi</span>' +
+          '<select id="wh-worker">' + options + '</select>' +
+        '</label>' +
+        '<div class="field"><span class="field-label">Su növü</span>' + waterSeg('wh-water', 'FILTERED') + '</div>' +
+        '<label class="field"><span class="field-label">Bidon sayı</span>' +
+          '<input id="wh-count" type="text" inputmode="numeric" placeholder="0">' +
+        '</label>' +
+        textField('wh-note', 'Qeyd (istəyə bağlı)', ''),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Qaytar', kind: 'primary', onClick: function () {
+            var count = parseInt($('#wh-count').value, 10) || 0;
+            if (count <= 0) throw new Error('Bidon sayı müsbət tam ədəd olmalıdır.');
+            var water = segValue('#wh-water');
+            if (!water) throw new Error('Su növünü seçin.');
+            return api('POST', '/inventory/return', {
+              workerId: $('#wh-worker').value,
+              waterType: water,
+              bottleCount: count,
+              note: $('#wh-note').value.trim() || undefined,
+              idempotencyKey: opKey,
+            }).then(function (r) {
+              closeModal();
+              toast('Qaytarma qeydə alındı · anbarda qalan: ' + r.newBalance + ' bidon', 'ok');
+              navigate('stock');
+            });
+          } },
+        ]);
+      bindSeg('#wh-water');
+    }
+
+    function openWriteOff() {
+      var opKey = idem('wo');
+      openModal('Anbardan çıxarış',
+        '<div class="field"><span class="field-label">Su növü</span>' + waterSeg('wh-water', 'FILTERED') + '</div>' +
+        '<label class="field"><span class="field-label">Səbəb növü</span>' +
+          '<select id="wh-wo-type">' +
+            '<option value="DAMAGE">Zədələnmiş</option>' +
+            '<option value="LOSS">İtmiş</option>' +
+          '</select>' +
+        '</label>' +
+        '<label class="field"><span class="field-label">Bidon sayı</span>' +
+          '<input id="wh-count" type="text" inputmode="numeric" placeholder="0">' +
+        '</label>' +
+        textField('wh-note', 'Səbəb (məcburi)', ''),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Çıxar', kind: 'danger', onClick: function () {
+            var count = parseInt($('#wh-count').value, 10) || 0;
+            if (count <= 0) throw new Error('Bidon sayı müsbət tam ədəd olmalıdır.');
+            var note = $('#wh-note').value.trim();
+            if (note.length < 3) throw new Error('Səbəb yazılmalıdır (ən azı 3 simvol).');
+            var water = segValue('#wh-water');
+            if (!water) throw new Error('Su növünü seçin.');
+            return api('POST', '/inventory/warehouse-write-off', {
+              type: $('#wh-wo-type').value,
+              waterType: water,
+              bottleCount: count,
+              note: note,
+              idempotencyKey: opKey,
+            }).then(function () {
+              closeModal();
+              toast('Anbardan çıxarış qeydə alındı.', 'ok');
+              navigate('stock');
+            });
+          } },
+        ]);
+      bindSeg('#wh-water');
+    }
+
+    if ($('#wh-in')) $('#wh-in').addEventListener('click', openInbound);
+    if ($('#wh-dist')) $('#wh-dist').addEventListener('click', openDistribute);
+    if ($('#wh-ret')) $('#wh-ret').addEventListener('click', openReturn);
+    if ($('#wh-out')) $('#wh-out').addEventListener('click', openWriteOff);
+
+    $('#sf-go').addEventListener('click', function () {
+      try {
+        var fromText = $('#sf-from').value.trim();
+        var toText = $('#sf-to').value.trim();
+        var fromIso = parseAzerbaijaniDate(fromText);
+        var toIso = parseAzerbaijaniDate(toText);
+        if (fromText && !fromIso) throw new Error('Başlanğıc tarix GG.AA.YYYY formatında olmalıdır.');
+        if (toText && !toIso) throw new Error('Son tarix GG.AA.YYYY formatında olmalıdır.');
+        if (fromIso && toIso && fromIso > toIso) {
+          throw new Error('Başlanğıc tarix son tarixdən böyük ola bilməz.');
+        }
+        STOCK_FILTER = {
+          preset: $('#sf-preset').value,
+          from: fromIso,
+          to: toIso,
+          waterType: $('#sf-water').value,
+          type: $('#sf-type').value,
+          workerId: $('#sf-worker').value,
+          createdById: $('#sf-actor').value,
+        };
+        navigate('stock');
+      } catch (e) {
+        toast(e.message, 'err');
+      }
+    });
+
+    $('#sf-reset').addEventListener('click', function () {
+      STOCK_FILTER = {
+        preset: 'last30days', from: '', to: '', waterType: '',
+        type: '', workerId: '', createdById: '',
+      };
+      navigate('stock');
+    });
   }
+
 
   // --------------------------------------------------------- customers --
   async function pageCustomers(view) {
     var q = ($('#cust-q') && $('#cust-q').value.trim()) || '';
     var data = await api('GET', '/customers?pageSize=100' + (q ? '&search=' + encodeURIComponent(q) : ''));
+    var admin = isAdmin();
+
+    var headers = [
+      { label: 'Ad' }, { label: 'Telefon' }, { label: 'Ünvan' },
+      { label: 'Çatdırılma', num: true }, { label: 'Bidon', num: true },
+      { label: 'Borc', num: true },
+    ];
+    if (admin) {
+      headers.push({ label: 'Depozit', num: true }, { label: 'Depozit bidon', num: true });
+    }
+    headers.push({ label: 'Son çatdırılma' }, { label: '', cls: 'actions' });
 
     var rows = data.items.map(function (c) {
-      return [
+      var r = [
         esc(c.name),
         esc(c.phone || '—'),
         esc(c.address),
         String(c.deliveryCount || 0),
         String(c.totalBottles || 0),
         money(c.totalDebt),
-        c.lastDeliveryAt ? date(c.lastDeliveryAt) : '—',
       ];
+      if (admin) {
+        r.push(money(c.depositBalance || 0), String(c.depositBottleBalance || 0));
+      }
+      r.push(
+        c.lastDeliveryAt ? date(c.lastDeliveryAt) : '—',
+        '<button class="btn btn-outline btn-sm" data-cust="' + c.id + '">Aç</button>',
+      );
+      return r;
     });
 
     view.innerHTML =
@@ -1021,15 +1644,14 @@
         '<button class="btn btn-primary" id="add-cust">+ Yeni müştəri</button>' +
       '</div>' +
       panel('Müştərilər (cəmi ' + data.total + ')', '',
-        table([
-          { label: 'Ad' }, { label: 'Telefon' }, { label: 'Ünvan' },
-          { label: 'Çatdırılma', num: true }, { label: 'Bidon', num: true },
-          { label: 'Borc', num: true }, { label: 'Son çatdırılma' },
-        ], rows, 'Müştəri yoxdur.'), true);
+        table(headers, rows, 'Müştəri yoxdur.'), true);
 
     $('#cust-search').addEventListener('click', function () { navigate('customers'); });
     $('#cust-q').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') navigate('customers');
+    });
+    $$('#view button[data-cust]').forEach(function (b) {
+      b.addEventListener('click', function () { openCustomerDetail(b.dataset.cust); });
     });
     $('#add-cust').addEventListener('click', function () {
       openModal('Yeni müştəri',
@@ -1054,6 +1676,216 @@
         ]);
     });
   }
+
+  // ------------------------------------------------- customer deposits ---
+  /** Tapping an address opens it in Google Maps, as the customer asked. */
+  function mapsLink(address) {
+    if (!address) return '—';
+    return '<a href="https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(address) + '" target="_blank" rel="noopener">' + esc(address) + '</a>';
+  }
+
+  function depositBadge(type) {
+    var t = DEPOSIT_TYPE[type] || { label: type || '—', cls: 'badge-muted' };
+    return '<span class="badge ' + t.cls + '">' + esc(t.label) + '</span>';
+  }
+
+  /**
+   * One customer: their deliveries, their deposit money and their bottles.
+   *
+   * The deposit balance is never stored on the customer row; it is the sum of
+   * an append-only ledger, so every lari and every bottle can be traced back to
+   * the movement that produced it. The ledger survives customer deletion.
+   */
+  async function openCustomerDetail(id) {
+    var c = await api('GET', '/customers/' + id);
+
+    var depositRows = (c.deposits || []).map(function (d) {
+      var sign = d.amount > 0 ? '+' : d.amount < 0 ? '−' : '';
+      return [
+        dateTimeFull(d.occurredAt),
+        depositBadge(d.type),
+        sign + money(Math.abs(d.amount)) + ' AZN',
+        (d.bottleCount > 0 ? '+' : '') + d.bottleCount,
+        money(d.balanceAfter) + ' AZN',
+        String(d.bottleBalanceAfter),
+        esc(d.note || '—'),
+        esc(d.createdByName || '—'),
+      ];
+    });
+
+    var deliveryRows = (c.deliveries || []).slice(0, 10).map(function (d) {
+      return [
+        dateTime(d.deliveredAt),
+        waterBadge(d.waterType),
+        String(d.bottleCount || 0),
+        money(d.totalAmount),
+        money(d.paidAmount),
+        money(d.debtAmount),
+        statusBadge(d.status),
+      ];
+    });
+
+    openModal('Müştəri · ' + (c.name || ''),
+      '<dl class="kv">' +
+        '<dt>Telefon</dt><dd>' + esc(c.phone || '—') + '</dd>' +
+        '<dt>Ünvan</dt><dd>' + mapsLink(c.address) + '</dd>' +
+        '<dt>Borc</dt><dd>' + money(c.totalDebt) + ' AZN</dd>' +
+        '<dt>Depozit balansı</dt><dd><strong>' + money(c.depositBalance || 0) + ' AZN</strong></dd>' +
+        '<dt>Depozit bidonları</dt><dd><strong>' + (c.depositBottleBalance || 0) + ' bidon</strong></dd>' +
+        '<dt>Çatdırılma</dt><dd>' + (c.deliveryCount || 0) + '</dd>' +
+        (c.note ? '<dt>Qeyd</dt><dd>' + esc(c.note) + '</dd>' : '') +
+      '</dl>' +
+      '<div class="toolbar" style="margin:12px 0 0">' +
+        '<button class="btn btn-primary btn-sm" id="dep-in">+ Depozit qəbul et</button>' +
+        '<button class="btn btn-secondary btn-sm" id="dep-out">− Depozit qaytar</button>' +
+        '<button class="btn btn-outline btn-sm" id="dep-adj">Düzəliş</button>' +
+      '</div>' +
+      '<h4 class="mt">Depozit tarixçəsi</h4>' +
+      table([
+        { label: 'Tarix / saat' }, { label: 'Əməliyyat' }, { label: 'Məbləğ', num: true },
+        { label: 'Bidon', num: true }, { label: 'Balans', num: true },
+        { label: 'Bidon balansı', num: true }, { label: 'Qeyd' }, { label: 'Kim' },
+      ], depositRows, 'Depozit hərəkəti yoxdur.') +
+      '<h4 class="mt">Son çatdırılmalar</h4>' +
+      table([
+        { label: 'Tarix' }, { label: 'Su' }, { label: 'Bidon', num: true },
+        { label: 'Ümumi', num: true }, { label: 'Ödənilən', num: true },
+        { label: 'Borc', num: true }, { label: 'Status' },
+      ], deliveryRows, 'Çatdırılma yoxdur.'),
+      [{ label: 'Bağla', kind: 'outline' }]);
+
+    $('#dep-in').addEventListener('click', function () { depositForm(c, 'DEPOSIT_IN'); });
+    $('#dep-out').addEventListener('click', function () { depositForm(c, 'DEPOSIT_OUT'); });
+    $('#dep-adj').addEventListener('click', function () { depositForm(c, 'ADJUSTMENT'); });
+  }
+
+  /**
+   * Records one deposit movement. A refund can never exceed what is held, and
+   * the server rejects it even if this form lets the number through.
+   */
+  function depositForm(c, type) {
+    var label = DEPOSIT_TYPE[type].label;
+    var isAdjustment = type === 'ADJUSTMENT';
+    openModal(label + ' — ' + (c.name || ''),
+      '<div class="alert alert-info">Mövcud depozit: <strong>' + money(c.depositBalance || 0) + ' AZN</strong> · ' +
+        '<strong>' + (c.depositBottleBalance || 0) + ' bidon</strong></div>' +
+      moneyField('dp-amount', isAdjustment ? 'Məbləğ (mənfi də ola bilər)' : 'Məbləğ (AZN)', '') +
+      '<label class="field"><span class="field-label">' +
+        (isAdjustment ? 'Bidon sayı (mənfi də ola bilər)' : 'Bidon sayı') + '</span>' +
+        '<input id="dp-bottles" type="number" step="1" value="0" /></label>' +
+      textField('dp-note', 'Qeyd / səbəb', ''),
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var amount = $('#dp-amount').value.trim();
+          var bottles = $('#dp-bottles').value.trim() || '0';
+          if (amount === '' || Number.isNaN(Number(amount))) {
+            throw new Error('Məbləğ düzgün yazılmalıdır.');
+          }
+          if (!isAdjustment && Number(amount) <= 0) {
+            throw new Error('Məbləğ sıfırdan böyük olmalıdır.');
+          }
+          if (Number(bottles) < 0) throw new Error('Bidon sayı mənfi ola bilməz.');
+          if (type === 'DEPOSIT_OUT' && Number(amount) > Number(c.depositBalance || 0)) {
+            throw new Error('Mövcud depozitdən (' + money(c.depositBalance || 0) + ' AZN) çox qaytarmaq olmaz.');
+          }
+          return api('POST', '/deposits', {
+            idempotencyKey: idem('dep'),
+            customerId: c.id,
+            type: type,
+            amount: amount,
+            bottleCount: Number(bottles),
+            note: $('#dp-note').value.trim() || undefined,
+          }).then(function () {
+            closeModal();
+            toast('Depozit əməliyyatı yazıldı.', 'ok');
+            openCustomerDetail(c.id);
+          });
+        } },
+      ]);
+  }
+
+  // -------------------------------------------------------- deposits -----
+  /**
+   * The whole deposit ledger, filterable by customer, type and date. This is
+   * money the company holds but has not earned: it is shown alone, never mixed
+   * into revenue.
+   */
+  async function pageDeposits(view) {
+    var f = DEPOSIT_FILTER;
+    var url = '/deposits?pageSize=100';
+    if (f.customerId) url += '&customerId=' + encodeURIComponent(f.customerId);
+    if (f.type) url += '&type=' + f.type;
+    if (f.from) url += '&from=' + encodeURIComponent(f.from);
+    if (f.to) url += '&to=' + encodeURIComponent(f.to);
+
+    var data = await api('GET', url);
+    var sums = await api('GET', '/deposits?pageSize=1');
+
+    var rows = (data.items || []).map(function (d) {
+      var sign = d.amount > 0 ? '+' : d.amount < 0 ? '−' : '';
+      return [
+        dateTimeFull(d.occurredAt),
+        '<button class="btn btn-outline btn-sm" data-dep-cust="' + d.customerId +
+          '" data-dep-name="' + esc(d.customerName || '') + '">' + esc(d.customerName || '—') + '</button>',
+        depositBadge(d.type),
+        sign + money(Math.abs(d.amount)) + ' AZN',
+        (d.bottleCount > 0 ? '+' : '') + d.bottleCount,
+        money(d.balanceAfter) + ' AZN',
+        String(d.bottleBalanceAfter),
+        esc(d.note || '—'),
+        esc(d.createdByName || '—'),
+      ];
+    });
+
+    view.innerHTML =
+      '<div class="cards">' +
+        card('Depozitdə saxlanan', withMoney((sums.totals && sums.totals.amount) || 0), '') +
+        card('Depozit bidonları', (sums.totals && sums.totals.bottleCount) || 0, '') +
+        card('Hərəkət sayı', data.total || 0) +
+      '</div>' +
+      '<div class="toolbar">' +
+        '<select id="dep-type"><option value="">Bütün növlər</option>' +
+          Object.keys(DEPOSIT_TYPE).map(function (k) {
+            return '<option value="' + k + '"' + (f.type === k ? ' selected' : '') + '>' +
+              esc(DEPOSIT_TYPE[k].label) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<input type="date" id="dep-from" value="' + esc(f.from || '') + '" />' +
+        '<input type="date" id="dep-to" value="' + esc(f.to || '') + '" />' +
+        '<button class="btn btn-secondary" id="dep-filter">Filtr et</button>' +
+        '<button class="btn btn-outline" id="dep-clear">Təmizlə</button>' +
+      '</div>' +
+      '<div class="alert alert-info">Depozit pulu şirkətin saxladığı, hələ qazanmadığı məbləğdir: ' +
+        'gəlir hesabına düşmür. Yalnız administrator depozit qəbul edə və qaytara bilər.</div>' +
+      panel('Depozit tarixçəsi (' + (data.total || 0) + ')', '',
+        table([
+          { label: 'Tarix / saat' }, { label: 'Müştəri' }, { label: 'Əməliyyat' },
+          { label: 'Məbləğ', num: true }, { label: 'Bidon', num: true },
+          { label: 'Balans', num: true }, { label: 'Bidon balansı', num: true },
+          { label: 'Qeyd' }, { label: 'Kim' },
+        ], rows, 'Depozit hərəkəti yoxdur.'), true);
+
+    $('#dep-filter').addEventListener('click', function () {
+      DEPOSIT_FILTER = {
+        customerId: '',
+        type: $('#dep-type').value,
+        from: $('#dep-from').value,
+        to: $('#dep-to').value,
+      };
+      navigate('deposits');
+    });
+    $('#dep-clear').addEventListener('click', function () {
+      DEPOSIT_FILTER = { customerId: '', type: '', from: '', to: '' };
+      navigate('deposits');
+    });
+    $$('#view button[data-dep-cust]').forEach(function (b) {
+      b.addEventListener('click', function () { openCustomerDetail(b.dataset.depCust); });
+    });
+  }
+
+  var DEPOSIT_FILTER = { customerId: '', type: '', from: '', to: '' };
 
   // -------------------------------------------------------- deliveries --
   async function pageDeliveries(view) {
@@ -1362,6 +2194,13 @@ function newDeliveryForm() {
           if (!day) throw new Error('Tarix GG.AA.İLİ formatında yazılmalıdır (məsələn ' + date(dayOffsetIso(0)) + ').');
           if (day > dayOffsetIso(0)) throw new Error('Çatdırılma tarixi gələcəkdə ola bilməz.');
 
+          // "Today" must be recorded at the moment of saving, not at noon UTC.
+          // Before 16:00 Baku, noon UTC is still ahead of the server clock, so
+          // the backend rightly rejects it as a future delivery. Leaving the
+          // field empty lets the server stamp the exact second. Backdated days
+          // keep noon UTC so the Baku calendar day never shifts.
+          var deliveredAt = day === dayOffsetIso(0) ? undefined : day + 'T12:00:00.000Z';
+
           return api('POST', '/deliveries', {
             customerId: picked || undefined,
             customerName: custName,
@@ -1372,7 +2211,7 @@ function newDeliveryForm() {
             officeId: dest === 'COMPANY' ? ($('#n-office').value || undefined) : undefined,
             address: dest === 'HOME' ? $('#n-addr').value.trim() : undefined,
             bottleCount: count,
-            deliveredAt: day + 'T12:00:00.000Z',
+            deliveredAt: deliveredAt,
             idempotencyKey: idem('d'),
           }).then(function () {
             closeModal();
@@ -1579,6 +2418,348 @@ function newDeliveryForm() {
       panel('İşçi üzrə', '', table(
         [{ label: 'İşçi' }, { label: 'İstifadəçi adı' }, { label: 'Say', num: true }, { label: 'Məbləğ', num: true }],
         byWorker, 'Bu dövrdə ödəniş yoxdur.'), true);
+  }
+
+  // ----------------------------------------------------------- prices ----
+  /**
+   * Sale prices, one per water type.
+   *
+   * An admin edits a price directly: no approval step, but every change lands
+   * in `price_history`. A worker can only *ask* for a change; until an admin
+   * approves, the price the customers pay does not move.
+   */
+  async function pagePrices(view) {
+    var prices = await api('GET', '/prices');
+    var pending = isAdmin()
+      ? await api('GET', '/prices/requests?status=PENDING&pageSize=50')
+      : { items: [], total: 0 };
+    var requests = await api('GET', '/prices/requests?pageSize=50');
+    var history = isAdmin() ? await api('GET', '/prices/history?pageSize=50') : { items: [], total: 0 };
+
+    var byType = {};
+    prices.forEach(function (p) { byType[p.waterType] = p; });
+    var filterPrice = byType.FILTERED || { price: 0 };
+    var springPrice = byType.SPRING || { price: 0 };
+
+    var html = '<div class="wh-grid">' +
+      '<div class="water-card filtered"><div class="water-card-label">Filtr suyu qiyməti</div>' +
+        '<div class="water-card-value">' + money(filterPrice.price) + '</div>' +
+        '<div class="water-card-unit">AZN / bidon' +
+          (filterPrice.updatedByName ? ' · ' + esc(filterPrice.updatedByName) : '') + '</div></div>' +
+      '<div class="water-card spring"><div class="water-card-label">Bulaq suyu qiyməti</div>' +
+        '<div class="water-card-value">' + money(springPrice.price) + '</div>' +
+        '<div class="water-card-unit">AZN / bidon' +
+          (springPrice.updatedByName ? ' · ' + esc(springPrice.updatedByName) : '') + '</div></div>' +
+      '</div>';
+
+    if (isAdmin()) {
+      html += '<div class="toolbar">' +
+        '<button class="btn btn-primary" id="pr-filtered">Filtr qiymətini dəyiş</button>' +
+        '<button class="btn btn-primary" id="pr-spring">Bulaq qiymətini dəyiş</button>' +
+      '</div>';
+      html += '<div class="alert alert-info">Qiymət dəyişikliyi dərhal qüvvəyə minir və tarixçəyə yazılır. ' +
+        'İşçi yalnız sorğu göndərə bilər; təsdiqi siz verirsiniz.</div>';
+    } else {
+      html += '<div class="alert alert-info">Qiyməti dəyişmək üçün sorğu göndərin. ' +
+        'Administrator təsdiqləyənə qədər mövcud qiymət qüvvədə qalır.</div>';
+      html += '<div class="toolbar">' +
+        '<button class="btn btn-primary" id="pr-request">+ Qiymət dəyişikliyi sorğusu</button>' +
+      '</div>';
+    }
+
+    if (isAdmin() && pending.items.length) {
+      var pendingRows = pending.items.map(function (r) {
+        return [
+          dateTime(r.requestedAt),
+          esc(r.requestedByName || '—'),
+          waterBadge(r.waterType),
+          money(r.oldPrice) + ' → ' + money(r.newPrice),
+          esc(r.reason),
+          '<div class="row-actions">' +
+            '<button class="btn btn-primary btn-sm" data-pr="approve" data-id="' + r.id + '">Təsdiq et</button>' +
+            '<button class="btn btn-danger btn-sm" data-pr="reject" data-id="' + r.id + '">Rədd et</button>' +
+          '</div>',
+        ];
+      });
+      html += panel('Gözləyən qiymət sorğuları (' + pending.total + ')', '', table([
+        { label: 'Tarix' }, { label: 'İşçi' }, { label: 'Su növü' },
+        { label: 'Təklif', num: true }, { label: 'Səbəb' }, { label: '', cls: 'actions' },
+      ], pendingRows, 'Gözləyən sorğu yoxdur.'), true);
+    }
+
+    var requestRows = (requests.items || []).map(function (r) {
+      var st = PRICE_STATUS[r.status] || { label: r.status, cls: 'badge-muted' };
+      return [
+        dateTime(r.requestedAt),
+        esc(r.requestedByName || '—'),
+        waterBadge(r.waterType),
+        money(r.oldPrice) + ' → ' + money(r.newPrice),
+        '<span class="badge ' + st.cls + '">' + esc(st.label) + '</span>',
+        esc(r.reason),
+        r.reviewedAt ? dateTime(r.reviewedAt) + ' · ' + esc(r.reviewedByName || '—') : '—',
+        esc(r.reviewNote || '—'),
+      ];
+    });
+    html += panel(isAdmin() ? 'Bütün qiymət sorğuları' : 'Mənim sorğularım', '', table([
+      { label: 'Tarix' }, { label: 'İşçi' }, { label: 'Su növü' },
+      { label: 'Təklif', num: true }, { label: 'Status' }, { label: 'Səbəb' },
+      { label: 'Cavab' }, { label: 'Qeyd' },
+    ], requestRows, 'Sorğu yoxdur.'), true);
+
+    if (isAdmin()) {
+      var historyRows = (history.items || []).map(function (h) {
+        return [
+          dateTimeFull(h.occurredAt),
+          waterBadge(h.waterType),
+          money(h.oldPrice) + ' → ' + money(h.newPrice),
+          h.source === 'PRICE_REQUEST'
+            ? '<span class="badge badge-info">işçi sorğusu</span>'
+            : '<span class="badge badge-muted">admin</span>',
+          esc(h.changedByName || '—'),
+          esc(h.note || '—'),
+        ];
+      });
+      html += panel('Qiymət tarixçəsi', '', table([
+        { label: 'Tarix / saat' }, { label: 'Su növü' }, { label: 'Dəyişiklik', num: true },
+        { label: 'Mənbə' }, { label: 'Kim' }, { label: 'Qeyd' },
+      ], historyRows, 'Qiymət dəyişikliyi yoxdur.'), true);
+    }
+
+    view.innerHTML = html;
+
+    if (isAdmin()) {
+      $('#pr-filtered').addEventListener('click', function () {
+        priceForm('FILTERED', filterPrice.price);
+      });
+      $('#pr-spring').addEventListener('click', function () {
+        priceForm('SPRING', springPrice.price);
+      });
+      $$('#view button[data-pr]').forEach(function (b) {
+        b.addEventListener('click', function () { reviewPriceRequest(b.dataset.id, b.dataset.pr, b); });
+      });
+    } else {
+      $('#pr-request').addEventListener('click', openPriceRequestForm);
+    }
+  }
+
+  function priceForm(waterType, current) {
+    openModal('Qiymət — ' + (WATER_FULL[waterType] || waterType),
+      '<div class="alert alert-info">Mövcud qiymət: <strong>' + money(current) + ' AZN</strong></div>' +
+      moneyField('pr-new', 'Yeni qiymət (AZN / bidon)', String(current ?? '0')) +
+      textField('pr-note', 'Qeyd (istəyə bağlı)', ''),
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var price = $('#pr-new').value.trim();
+          if (price === '' || Number.isNaN(Number(price)) || Number(price) < 0) {
+            throw new Error('Qiymət düzgün yazılmalıdır.');
+          }
+          return api('PUT', '/prices/' + waterType, {
+            price: price,
+            note: $('#pr-note').value.trim() || undefined,
+          }).then(function (r) {
+            closeModal();
+            toast(r.changed ? 'Qiymət dəyişdirildi.' : 'Qiymət eynidir, dəyişiklik yazılmadı.', 'ok');
+            navigate('prices');
+          });
+        } },
+      ]);
+  }
+
+  function openPriceRequestForm() {
+    openModal('Qiymət dəyişikliyi sorğusu',
+      '<label class="field"><span class="field-label">Su növü</span>' +
+        '<select id="prq-water">' +
+          '<option value="FILTERED">Filtr suyu</option>' +
+          '<option value="SPRING">Bulaq suyu</option>' +
+        '</select></label>' +
+      moneyField('prq-price', 'Təklif olunan qiymət (AZN / bidon)', '') +
+      textField('prq-reason', 'Səbəb', ''),
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Göndər', kind: 'primary', onClick: function () {
+          var price = $('#prq-price').value.trim();
+          var reason = $('#prq-reason').value.trim();
+          if (price === '' || Number.isNaN(Number(price))) throw new Error('Qiymət düzgün yazılmalıdır.');
+          if (reason.length < 3) throw new Error('Səbəb yazılmalıdır.');
+          return api('POST', '/prices/requests', {
+            waterType: $('#prq-water').value,
+            newPrice: price,
+            reason: reason,
+          }).then(function () {
+            closeModal();
+            toast('Sorğu göndərildi. Administrator cavab verəcək.', 'ok');
+            navigate('prices');
+          });
+        } },
+      ]);
+  }
+
+  function reviewPriceRequest(id, action, btn) {
+    btn.disabled = true;
+    var approve = action === 'approve';
+    openModal(approve ? 'Qiymət sorğusunu təsdiqlə' : 'Qiymət sorğusunu rədd et',
+      '<div class="alert alert-info">' +
+        (approve
+          ? 'Təsdiqlədikdə yeni qiymət dərhal qüvvəyə minir və tarixçəyə yazılır.'
+          : 'Rədd etdikdə qiymət dəyişmir; qərar tarixçədə qalır.') +
+      '</div>' +
+      textField('prv-note', 'Qeyd (istəyə bağlı)', ''),
+      [
+        { label: 'Ləğv et', kind: 'outline', onClick: function () { btn.disabled = false; } },
+        { label: approve ? 'Təsdiq et' : 'Rədd et', kind: approve ? 'primary' : 'danger', onClick: function () {
+          return api('PATCH', '/prices/requests/' + id, {
+            action: approve ? 'APPROVE' : 'REJECT',
+            note: $('#prv-note').value.trim() || undefined,
+          }).then(function () {
+            closeModal();
+            toast(approve ? 'Qiymət təsdiqləndi.' : 'Sorğu rədd edildi.', 'ok');
+            navigate('prices');
+          });
+        } },
+      ]);
+  }
+
+  // ---------------------------------------------------------- expenses ---
+  var EXPENSE_FILTER = { category: '', waterType: '', from: '', to: '', includeVoided: false };
+
+  /**
+   * Company expenses. Admin-only, because an expense reduces profit. A wrong
+   * entry is voided, never deleted, so the ledger keeps its history.
+   */
+  async function pageExpenses(view) {
+    var f = EXPENSE_FILTER;
+    var url = '/expenses?pageSize=100';
+    if (f.category) url += '&category=' + f.category;
+    if (f.waterType) url += '&waterType=' + f.waterType;
+    if (f.from) url += '&from=' + encodeURIComponent(f.from);
+    if (f.to) url += '&to=' + encodeURIComponent(f.to);
+    if (f.includeVoided) url += '&includeVoided=true';
+
+    var data = await api('GET', url);
+    var finance = (await api('GET', '/dashboard/admin')).finance || {};
+    var exp = finance.expensesByWater || { filtered: 0, spring: 0, shared: 0, total: 0 };
+
+    var rows = (data.items || []).map(function (e) {
+      var voided = Boolean(e.voidedAt);
+      return [
+        dateTime(e.spentAt),
+        esc(EXPENSE_CATEGORY[e.category] || e.category),
+        e.waterType ? waterBadge(e.waterType) : '<span class="badge badge-muted">ümumi</span>',
+        money(e.amount) + ' AZN',
+        esc(e.note || '—'),
+        esc(e.createdByName || '—'),
+        voided
+          ? '<span class="badge badge-muted">ləğv edilib</span> ' + esc(e.voidReason || '')
+          : '<button class="btn btn-outline btn-sm" data-void="' + e.id + '" data-amount="' + e.amount + '">Ləğv et</button>',
+      ];
+    });
+
+    view.innerHTML =
+      '<div class="cards">' +
+        card('Filtr xərci', withMoney(exp.filtered || 0), 'bad') +
+        card('Bulaq xərci', withMoney(exp.spring || 0), 'bad') +
+        card('Ümumi xərc', withMoney(exp.total || 0), 'bad', (exp.shared || 0) + ' AZN bölünməmiş') +
+        card('Bu siyahıda', withMoney(data.totalAmount || 0), '') +
+      '</div>' +
+      '<div class="toolbar">' +
+        '<select id="ex-cat"><option value="">Bütün kateqoriyalar</option>' +
+          Object.keys(EXPENSE_CATEGORY).map(function (k) {
+            return '<option value="' + k + '"' + (f.category === k ? ' selected' : '') + '>' +
+              esc(EXPENSE_CATEGORY[k]) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<select id="ex-water"><option value="">Bütün su növləri</option>' +
+          '<option value="FILTERED"' + (f.waterType === 'FILTERED' ? ' selected' : '') + '>Filtr suyu</option>' +
+          '<option value="SPRING"' + (f.waterType === 'SPRING' ? ' selected' : '') + '>Bulaq suyu</option>' +
+        '</select>' +
+        '<input type="date" id="ex-from" value="' + esc(f.from || '') + '" />' +
+        '<input type="date" id="ex-to" value="' + esc(f.to || '') + '" />' +
+        '<label class="small nowrap" style="display:flex;align-items:center;gap:5px">' +
+          '<input type="checkbox" id="ex-voided" style="width:auto"' + (f.includeVoided ? ' checked' : '') + ' /> ləğv edilənlər də</label>' +
+        '<button class="btn btn-secondary" id="ex-filter">Filtr et</button>' +
+        '<div style="flex:1"></div>' +
+        '<button class="btn btn-primary" id="ex-add">+ Xərc əlavə et</button>' +
+      '</div>' +
+      '<div class="alert alert-info">Xərc mənfəətdən çıxılır. Su növü seçilməzsə, xərc ümumi mənfəətdən çıxılır, ' +
+        'ayrı-ayrı Filtr/Bulaq mənfəətindən deyil.</div>' +
+      panel('Xərclər (' + (data.total || 0) + ')', '',
+        table([
+          { label: 'Tarix' }, { label: 'Kateqoriya' }, { label: 'Su növü' },
+          { label: 'Məbləğ', num: true }, { label: 'Qeyd' }, { label: 'Kim' }, { label: '', cls: 'actions' },
+        ], rows, 'Xərc yoxdur.'), true);
+
+    $('#ex-filter').addEventListener('click', function () {
+      EXPENSE_FILTER = {
+        category: $('#ex-cat').value,
+        waterType: $('#ex-water').value,
+        from: $('#ex-from').value,
+        to: $('#ex-to').value,
+        includeVoided: $('#ex-voided').checked,
+      };
+      navigate('expenses');
+    });
+    $('#ex-add').addEventListener('click', openExpenseForm);
+    $$('#view button[data-void]').forEach(function (b) {
+      b.addEventListener('click', function () { voidExpense(b.dataset.void, b.dataset.amount); });
+    });
+  }
+
+  function openExpenseForm() {
+    openModal('Yeni xərc',
+      '<label class="field"><span class="field-label">Kateqoriya</span>' +
+        '<select id="ex-new-cat">' +
+          Object.keys(EXPENSE_CATEGORY).map(function (k) {
+            return '<option value="' + k + '">' + esc(EXPENSE_CATEGORY[k]) + '</option>';
+          }).join('') +
+        '</select></label>' +
+      '<label class="field"><span class="field-label">Su növü (istəyə bağlı)</span>' +
+        '<select id="ex-new-water">' +
+          '<option value="">Ümumi (bölünməmiş)</option>' +
+          '<option value="FILTERED">Filtr suyu</option>' +
+          '<option value="SPRING">Bulaq suyu</option>' +
+        '</select></label>' +
+      moneyField('ex-new-amount', 'Məbləğ (AZN)', '') +
+      textField('ex-new-note', 'Qeyd', ''),
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var amount = $('#ex-new-amount').value.trim();
+          if (amount === '' || Number.isNaN(Number(amount)) || Number(amount) <= 0) {
+            throw new Error('Xərc məbləği sıfırdan böyük olmalıdır.');
+          }
+          return api('POST', '/expenses', {
+            idempotencyKey: idem('exp'),
+            category: $('#ex-new-cat').value,
+            waterType: $('#ex-new-water').value || undefined,
+            amount: amount,
+            note: $('#ex-new-note').value.trim() || undefined,
+          }).then(function () {
+            closeModal();
+            toast('Xərc qeydə alındı.', 'ok');
+            navigate('expenses');
+          });
+        } },
+      ]);
+  }
+
+  function voidExpense(id, amount) {
+    openModal('Xərci ləğv et',
+      '<div class="alert alert-error">' + money(amount) + ' AZN məbləğində xərc ləğv ediləcək. ' +
+        'Qeyd silinmir, tarixçədə "ləğv edilib" kimi qalır.</div>' +
+      textField('ex-void-reason', 'Ləğv səbəbi', ''),
+      [
+        { label: 'İmtina', kind: 'outline' },
+        { label: 'Ləğv et', kind: 'danger', onClick: function () {
+          var reason = $('#ex-void-reason').value.trim();
+          if (reason.length < 3) throw new Error('Ləğv səbəbi yazılmalıdır.');
+          return api('POST', '/expenses/' + id + '/void', { reason: reason }).then(function () {
+            closeModal();
+            toast('Xərc ləğv edildi.', 'ok');
+            navigate('expenses');
+          });
+        } },
+      ]);
   }
 
   // ----------------------------------------------------------- reports --
@@ -1796,6 +2977,66 @@ function newDeliveryForm() {
       b.addEventListener('click', function () {
         var ext = b.dataset.yf === 'xls' ? '.xls' : '.' + b.dataset.yf;
         downloadReport(yearlyPath(b.dataset.yf), 'illik-hesabat' + ext, ext);
+      });
+    });
+  }
+
+  // ------------------------------------------------------ notifications --
+  /**
+   * Admin-only warehouse notifications.
+   *
+   * Every row is written server-side at the moment of the operation and carries
+   * the actor, water type, count, the balance before and after, the exact time
+   * and any reason. It can be marked read, never deleted.
+   */
+  async function pageNotifications(view) {
+    var d = await api('GET', '/notifications?pageSize=100');
+    var items = d.items || [];
+
+    var rows = items.map(function (n) {
+      var kind = NOTIF_KIND[n.kind] || { label: n.kind || 'Anbar', cls: 'badge-info' };
+      var isStock = (n.kind || 'STOCK') === 'STOCK' && n.waterType;
+      var mv = txMovement({ type: n.action, signedCount: 1 });
+      var qty = isStock ? (mv.sign * (n.bottleCount || 0)) : (n.bottleCount || 0);
+      return [
+        n.read ? '<span class="badge badge-muted">oxunub</span>' : '<span class="badge badge-info">yeni</span>',
+        dateTimeFull(n.createdAt),
+        esc(n.actorName || '—'),
+        '<span class="badge ' + kind.cls + '">' + esc(kind.label) + '</span>',
+        esc(n.title || TX_LABEL[n.action] || mv.label || n.action),
+        n.waterType ? waterBadge(n.waterType) : '<span class="muted">—</span>',
+        isStock ? signedBadge(qty) : (n.bottleCount ? n.bottleCount + ' bidon' : '—'),
+        isStock && n.beforeBalance !== null && n.afterBalance !== null
+          ? '<span class="mono">' + n.beforeBalance + ' → ' + n.afterBalance + '</span>'
+          : '<span class="muted">—</span>',
+        esc(n.message || n.note || '—'),
+        n.read ? '—' : '<button class="btn btn-secondary btn-sm" data-read="' + n.id + '">Oxundu</button>',
+      ];
+    });
+
+    view.innerHTML =
+      '<div class="alert alert-info">Hər əməliyyat avtomatik bildiriş yaradır: anbar, depozit, qiymət və xərc. ' +
+        'Bildirişlər yalnız administratora görünür və silinə bilməz.</div>' +
+      panel('Bildirişlər (' + (d.total || 0) + ')',
+        '<button class="btn btn-outline btn-sm" id="nt-readall">Hamısını oxundu et</button>',
+        table([
+          { label: '' }, { label: 'Tarix / saat' }, { label: 'Kim' }, { label: 'Növ' },
+          { label: 'Əməliyyat' }, { label: 'Su növü' }, { label: 'Say', num: true }, { label: 'Balans' },
+          { label: 'Təsvir' }, { label: '', cls: 'actions' },
+        ], rows, 'Hələ bildiriş yoxdur.'), true);
+
+    $('#nt-readall').addEventListener('click', async function () {
+      await api('PATCH', '/notifications/read-all', {});
+      toast('Bütün bildirişlər oxundu.', 'ok');
+      refreshNotifBadge();
+      navigate('notifications');
+    });
+
+    $$('#view button[data-read]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        await api('PATCH', '/notifications/' + b.dataset.read + '/read', {});
+        refreshNotifBadge();
+        navigate('notifications');
       });
     });
   }

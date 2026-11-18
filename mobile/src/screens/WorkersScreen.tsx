@@ -134,9 +134,14 @@ export const WorkersScreen: React.FC = () => {
                       {w.phone ? ` · ${w.phone}` : ''}
                     </Text>
                   </View>
-                  <Chip compact style={w.isActive ? styles.activeChip : styles.inactiveChip}>
-                    {w.isActive ? 'Aktiv' : 'Deaktiv'}
-                  </Chip>
+                  <View style={styles.chipStack}>
+                    <Chip compact style={w.workerType === 'WAREHOUSE_KEEPER' ? styles.keeperChip : styles.regularChip}>
+                      {w.workerType === 'WAREHOUSE_KEEPER' ? 'Anbardar' : 'Adi işçi'}
+                    </Chip>
+                    <Chip compact style={w.isActive ? styles.activeChip : styles.inactiveChip}>
+                      {w.isActive ? 'Aktiv' : 'Deaktiv'}
+                    </Chip>
+                  </View>
                 </View>
 
                 <View style={styles.statGrid}>
@@ -274,6 +279,9 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: colors.textMuted },
   activeChip: { backgroundColor: colors.successBg },
   inactiveChip: { backgroundColor: colors.dangerBg },
+  keeperChip: { backgroundColor: colors.infoBg },
+  regularChip: { backgroundColor: colors.surfaceVariant },
+  chipStack: { alignItems: 'flex-end', gap: 2 },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.sm },
   stat: { width: '33%', gap: 1 },
   statLabel: { fontSize: 10, color: colors.textMuted },

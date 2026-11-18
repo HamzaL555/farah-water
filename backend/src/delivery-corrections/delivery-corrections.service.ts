@@ -1,9 +1,11 @@
-import { DeliveryCorrectionStatus, Prisma, Role } from '@prisma/client';
+import { DeliveryCorrectionStatus, DeliveryStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../prisma';
 import { AppError, badRequest, forbidden, notFound } from '../common/utils/errors';
 import { round2 } from '../common/utils/status';
 import { audit } from '../common/utils/audit';
 import { recalcDelivery } from '../deliveries/delivery.service';
+import { applyInventoryTx, workerKey } from '../inventory/inventory.service';
+import { createNotification } from '../notifications/notification.service';
 import type { Actor } from '../users/users.service';
 
 export type DeliveryCorrection = {
@@ -51,7 +53,7 @@ export async function requestCorrection(
 
   // Only the delivery's own worker can request a correction.
   if (delivery.workerId !== actor.id) {
-    throw forbidden('Yalnız çatdırılmanın işçisi təyin.editor düzəldişi istəyə bilər.');
+    throw forbidden('Yalnız çatdırılmanın işçisi düzəliş istəyə bilər.');
   }
 
   // Cannot correct a cancelled delivery.
@@ -64,7 +66,7 @@ export async function requestCorrection(
     where: { deliveryId: input.deliveryId, status: DeliveryCorrectionStatus.PENDING },
   });
   if (existing) {
-    throw badRequest('Bu çatdırılma üçün gözləmədə düzəlliq artıq var.');
+    throw badRequest('Bu çatdırılma üçün gözləmədə düzəliş artıq var.');
   }
 
   const correction = await prisma.deliveryCorrection.create({
@@ -115,7 +117,7 @@ export async function listCorrections(
   actor: Actor,
 ) {
   if (actor.role !== Role.ADMIN) {
-    throw forbidden('Yalnız administrator düzəlliklərə baxa bilər.');
+    throw forbidden('Yalnız administrator düzəlişlərə baxa bilər.');
   }
 
   const [items, total] = await Promise.all([
@@ -153,7 +155,16 @@ export async function listCorrections(
 
 /**
  * Admin approves or rejects a correction request.
- * When approved, the delivery's bottleCount is updated and totals recomputed.
+ *
+ * When approved, the delivery's bottleCount is updated, the totals are
+ * recomputed, AND the worker's bottle balance is moved by the difference:
+ * a higher count spends more of their stock, a lower one returns it. Without
+ * this leg the delivery total and the bottle ledger would disagree, which is
+ * exactly what a "düzəliş" exists to prevent.
+ *
+ * The approval is claimed with a conditional UPDATE on PENDING, so a double
+ * click (or two admins at once) can never move the same bottles twice. The
+ * inventory reference is fixed per correction id as a second line of defence.
  */
 export async function reviewCorrection(
   correctionId: string,
@@ -161,7 +172,7 @@ export async function reviewCorrection(
   actor: Actor,
 ) {
   if (actor.role !== Role.ADMIN) {
-    throw forbidden('Yalnız administrator düzəllik təsdiqləyə bilər.');
+    throw forbidden('Yalnız administrator düzəlişi təsdiqləyə bilər.');
   }
 
   const correction = await prisma.deliveryCorrection.findUnique({
@@ -170,26 +181,82 @@ export async function reviewCorrection(
   });
   if (!correction) throw notFound('Düzəllik tapılmadı.');
   if (correction.status !== DeliveryCorrectionStatus.PENDING) {
-    throw badRequest('Bu düzəllik artıq təyin.editor edilib və ya rədd edilib.');
+    throw badRequest('Bu düzəllik artıq təsdiqlənib və ya rədd edilib.');
   }
 
+  // Filled inside the transaction and read after commit, so a notification is
+  // only written for a change that really happened.
+  const stock = {
+    delta: 0,
+    after: null as number | null,
+    before: 0,
+    waterType: correction.delivery.waterType,
+  };
+
   const updated = await prisma.$transaction(async (tx) => {
-    const c = await tx.deliveryCorrection.update({
-      where: { id: correctionId },
+    // Atomic claim: only one review may pass from PENDING to a final status.
+    const claimed = await tx.deliveryCorrection.updateMany({
+      where: { id: correctionId, status: DeliveryCorrectionStatus.PENDING },
       data: {
         status: input.status === 'APPROVED' ? DeliveryCorrectionStatus.APPROVED : DeliveryCorrectionStatus.REJECTED,
         approvedById: actor.id,
         approvedAt: new Date(),
       },
+    });
+    if (claimed.count === 0) {
+      throw badRequest('Bu düzəllik artıq təsdiqlənib və ya rədd edilib.');
+    }
+
+    const c = await tx.deliveryCorrection.findUniqueOrThrow({
+      where: { id: correctionId },
       include: { delivery: true },
     });
 
     if (input.status === 'APPROVED') {
-      // Update the delivery's bottleCount. totalAmount = bottleCount * unitPrice
-      // is recomputed by recalcDelivery.
+      if (c.delivery.status === DeliveryStatus.CANCELLED) {
+        throw badRequest('Ləğv edilmiş çatdırılma üçün düzəliş təsdiqlənə bilməz.');
+      }
+
+      // Use the delivery's CURRENT count, not the one captured when the worker
+      // asked: an admin may have edited it while the request was pending. The
+      // balance must move by what actually changes now.
+      const currentCount = c.delivery.bottleCount;
+      const delta = c.newBottleCount - currentCount;
+      stock.delta = delta;
+      stock.waterType = c.delivery.waterType;
+
+      if (delta !== 0) {
+        const applied = await applyInventoryTx(tx, {
+          reference: `delivery:correction:${correctionId}`,
+          type: delta > 0 ? 'OUT_DELIVERY' : 'RETURN_TO_STOCK',
+          waterType: c.delivery.waterType,
+          bottleCount: Math.abs(delta),
+          balanceKey: workerKey(c.delivery.workerId, c.delivery.waterType),
+          direction: delta > 0 ? -1 : 1,
+          workerId: c.delivery.workerId,
+          deliveryId: c.deliveryId,
+          note:
+            `Təsdiqlənmiş düzəliş: ${correction.reason}` +
+            (input.reason ? ` (${input.reason})` : ''),
+          createdById: actor.id,
+        });
+        stock.after = applied.newBalance;
+        stock.before = applied.newBalance + delta;
+      }
+
+      // Update the delivery's bottleCount. totalAmount and debtAmount must move
+      // in the SAME statement: the table enforces
+      // `debt_amount = total_amount - paid_amount`, so writing the count alone
+      // makes the row momentarily inconsistent and PostgreSQL rejects it.
+      // recalcDelivery then re-derives the settled figures from the ledger.
+      const newTotal = round2(new Prisma.Decimal(c.delivery.unitPrice).mul(c.newBottleCount));
       await tx.delivery.update({
         where: { id: correction.deliveryId },
-        data: { bottleCount: correction.newBottleCount },
+        data: {
+          bottleCount: c.newBottleCount,
+          totalAmount: newTotal,
+          debtAmount: newTotal.minus(c.delivery.paidAmount),
+        },
       });
       await recalcDelivery(tx, correction.deliveryId);
     }
@@ -210,7 +277,31 @@ export async function reviewCorrection(
       oldBottleCount: correction.oldBottleCount,
       newBottleCount: correction.newBottleCount,
     },
+    meta: {
+      workerId: correction.delivery.workerId,
+      bottleDelta: stock.delta,
+      beforeBalance: stock.after !== null ? stock.before : null,
+      afterBalance: stock.after,
+    },
   });
+
+  // A bottle-count correction is a balance change like any other: the admin
+  // supervising the warehouse sees it with the exact before/after figures.
+  if (input.status === 'APPROVED' && stock.after !== null && stock.delta !== 0) {
+    await createNotification({
+      userId: actor.id,
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      action: stock.delta > 0 ? 'OUT_DELIVERY' : 'RETURN_TO_STOCK',
+      waterType: stock.waterType,
+      bottleCount: Math.abs(stock.delta),
+      beforeBalance: stock.before,
+      afterBalance: stock.after,
+      note: `Çatdırılma düzəlişi təsdiqləndi: ${correction.reason}`,
+      relatedId: correction.deliveryId,
+    });
+  }
 
   return updated;
 }

@@ -37,6 +37,7 @@ export function serializeUser(user: {
   phone: string | null;
   email: string | null;
   role: string;
+  workerType?: string | null;
   isActive: boolean;
   mustChangePassword?: boolean;
   lastLoginAt?: Date | null;
@@ -50,6 +51,7 @@ export function serializeUser(user: {
     phone: user.phone,
     email: user.email,
     role: user.role,
+    workerType: user.workerType ?? null,
     isActive: user.isActive,
     mustChangePassword: user.mustChangePassword ?? false,
     lastLoginAt: iso(user.lastLoginAt),
@@ -195,9 +197,12 @@ export function serializeInventoryTx(t: {
   bottleCount: number;
   direction: number;
   balanceKey: string;
+  waterType?: string;
   workerId: string | null;
   deliveryId: string | null;
   note: string | null;
+  beforeBalance?: number | null;
+  afterBalance?: number | null;
   occurredAt: Date;
   createdById: string;
   createdAt: Date;
@@ -213,10 +218,13 @@ export function serializeInventoryTx(t: {
     direction: t.direction,
     signedCount: t.direction * t.bottleCount,
     balanceKey: t.balanceKey,
+    waterType: t.waterType ?? 'FILTERED',
     workerId: t.workerId,
     workerName: t.worker?.fullName ?? null,
     deliveryId: t.deliveryId,
     note: t.note,
+    beforeBalance: t.beforeBalance ?? null,
+    afterBalance: t.afterBalance ?? null,
     occurredAt: iso(t.occurredAt),
     createdById: t.createdById,
     createdByName: t.createdBy?.fullName ?? null,
@@ -246,5 +254,147 @@ export function serializeDebtAdjustment(a: {
     createdById: a.createdById,
     createdByName: a.createdBy?.fullName ?? null,
     createdAt: iso(a.createdAt),
+  };
+}
+
+// ------------------------------ deposits -----------------------------------
+
+export function serializeDeposit(d: {
+  id: string;
+  customerId: string;
+  type: string;
+  amount: Prisma.Decimal;
+  bottleCount: number;
+  balanceAfter: Prisma.Decimal;
+  bottleBalanceAfter: number;
+  note: string | null;
+  occurredAt: Date;
+  createdById: string;
+  createdAt: Date;
+  customer?: { id: string; name: string; phone?: string | null } | null;
+  createdBy?: { id: string; fullName: string } | null;
+}) {
+  return {
+    id: d.id,
+    customerId: d.customerId,
+    customerName: d.customer?.name ?? null,
+    customerPhone: d.customer?.phone ?? null,
+    type: d.type,
+    amount: moneyOut(d.amount),
+    bottleCount: d.bottleCount,
+    balanceAfter: moneyOut(d.balanceAfter),
+    bottleBalanceAfter: d.bottleBalanceAfter,
+    note: d.note,
+    occurredAt: iso(d.occurredAt),
+    createdById: d.createdById,
+    createdByName: d.createdBy?.fullName ?? null,
+    createdAt: iso(d.createdAt),
+  };
+}
+
+// ------------------------------- prices ------------------------------------
+
+export function serializePrice(p: {
+  waterType: string;
+  price: Prisma.Decimal;
+  effectiveFrom?: Date;
+  updatedAt?: Date;
+  updatedBy?: { id: string; fullName: string } | null;
+}) {
+  return {
+    waterType: p.waterType,
+    price: moneyOut(p.price),
+    effectiveFrom: iso(p.effectiveFrom),
+    updatedAt: iso(p.updatedAt),
+    updatedByName: p.updatedBy?.fullName ?? null,
+  };
+}
+
+export function serializePriceRequest(r: {
+  id: string;
+  waterType: string;
+  oldPrice: Prisma.Decimal;
+  newPrice: Prisma.Decimal;
+  reason: string;
+  status: string;
+  requestedAt: Date;
+  reviewedAt: Date | null;
+  reviewNote: string | null;
+  requestedById: string;
+  reviewedById: string | null;
+  requestedBy?: { id: string; fullName: string; username: string } | null;
+  reviewedBy?: { id: string; fullName: string } | null;
+}) {
+  return {
+    id: r.id,
+    waterType: r.waterType,
+    oldPrice: moneyOut(r.oldPrice),
+    newPrice: moneyOut(r.newPrice),
+    reason: r.reason,
+    status: r.status,
+    requestedAt: iso(r.requestedAt),
+    requestedById: r.requestedById,
+    requestedByName: r.requestedBy?.fullName ?? null,
+    requestedByUsername: r.requestedBy?.username ?? null,
+    reviewedAt: iso(r.reviewedAt),
+    reviewedById: r.reviewedById,
+    reviewedByName: r.reviewedBy?.fullName ?? null,
+    reviewNote: r.reviewNote,
+  };
+}
+
+export function serializePriceHistory(h: {
+  id: string;
+  waterType: string;
+  oldPrice: Prisma.Decimal;
+  newPrice: Prisma.Decimal;
+  source: string;
+  requestId: string | null;
+  note: string | null;
+  occurredAt: Date;
+  changedById: string;
+  changedBy?: { id: string; fullName: string } | null;
+}) {
+  return {
+    id: h.id,
+    waterType: h.waterType,
+    oldPrice: moneyOut(h.oldPrice),
+    newPrice: moneyOut(h.newPrice),
+    source: h.source,
+    requestId: h.requestId,
+    note: h.note,
+    occurredAt: iso(h.occurredAt),
+    changedById: h.changedById,
+    changedByName: h.changedBy?.fullName ?? null,
+  };
+}
+
+// ------------------------------ expenses -----------------------------------
+
+export function serializeExpense(e: {
+  id: string;
+  category: string;
+  waterType: string | null;
+  amount: Prisma.Decimal;
+  spentAt: Date;
+  note: string | null;
+  createdById: string;
+  createdAt: Date;
+  voidedAt: Date | null;
+  voidReason: string | null;
+  createdBy?: { id: string; fullName: string } | null;
+}) {
+  return {
+    id: e.id,
+    category: e.category,
+    waterType: e.waterType,
+    amount: moneyOut(e.amount),
+    spentAt: iso(e.spentAt),
+    note: e.note,
+    createdById: e.createdById,
+    createdByName: e.createdBy?.fullName ?? null,
+    createdAt: iso(e.createdAt),
+    voidedAt: iso(e.voidedAt),
+    voidReason: e.voidReason,
   };
 }

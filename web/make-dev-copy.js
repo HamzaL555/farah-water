@@ -31,10 +31,15 @@ copyDir(path.join(__dirname, '..', 'backend', 'public', 'admin'), path.join(out,
 
 const index = path.join(out, 'admin', 'index.html');
 let html = fs.readFileSync(index, 'utf8');
+// The app.js tag is cache-busted (`app.js?v=...`), so match the tag rather than
+// a bare filename. The override must come before app.js runs.
+const appTag = /<script src="\/admin\/app\.js[^"]*"><\/script>/;
+if (!appTag.test(html)) {
+  throw new Error('app.js <script> tag not found in admin/index.html');
+}
 html = html.replace(
-  '<link rel="stylesheet" href="/admin/styles.css" />',
-  `<script>window.FARAH_API_URL=${JSON.stringify(apiBase)};</script>\n    ` +
-  '<link rel="stylesheet" href="/admin/styles.css" />',
+  appTag,
+  `<script>window.FARAH_API_URL=${JSON.stringify(apiBase)};</script>\n    $&`,
 );
 fs.writeFileSync(index, html);
 

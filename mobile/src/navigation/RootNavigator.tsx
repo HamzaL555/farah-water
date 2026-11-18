@@ -27,6 +27,9 @@ import { AdminDeliveriesScreen } from '../screens/AdminDeliveriesScreen';
 import { WarehouseScreen } from '../screens/WarehouseScreen';
 import { ReportsScreen } from '../screens/ReportsScreen';
 import { AuditLogScreen } from '../screens/AuditLogScreen';
+import { PricesScreen } from '../screens/PricesScreen';
+import { ExpensesScreen } from '../screens/ExpensesScreen';
+import { DepositsScreen } from '../screens/DepositsScreen';
 import { colors } from '../theme';
 import type { AdminStackParamList, AdminTabParamList, WorkerStackParamList, WorkerTabParamList } from './types';
 
@@ -63,7 +66,13 @@ const tabScreenOptions = {
   tabBarItemStyle: { paddingVertical: 6 },
 } as const;
 
-const WorkerTabs: React.FC = () => (
+const WorkerTabs: React.FC = () => {
+  const { user } = useAuth();
+  // A regular worker only ever sees their own bottles; the anbardar sees the
+  // warehouse. The tab label says which, so nobody opens it expecting the other.
+  const isKeeper = user?.workerType === 'WAREHOUSE_KEEPER';
+  const bottlesTitle = isKeeper ? 'Anbar' : 'Bidonlarım';
+  return (
   <WorkerTab.Navigator screenOptions={tabScreenOptions}>
     <WorkerTab.Screen
       name="Home"
@@ -99,14 +108,14 @@ const WorkerTabs: React.FC = () => (
       }}
     />
     {/* The worker runs the warehouse from here: receives, takes, returns.
-        Titled "Anbar" so it is the same panel the admin watches, not a
-        separate private count. */}
+        A regular worker sees only their own balance and cannot touch the
+        warehouse at all. */}
     <WorkerTab.Screen
       name="Bottles"
       component={BottlesScreen}
       options={{
-        title: 'Anbar',
-        tabBarLabel: 'Anbar',
+        title: bottlesTitle,
+        tabBarLabel: bottlesTitle,
         tabBarIcon: ({ focused, color }) => <TabIcon name="bottle-soda-outline" color={color} focused={focused} />,
       }}
     />
@@ -127,7 +136,8 @@ const WorkerTabs: React.FC = () => (
       }}
     />
   </WorkerTab.Navigator>
-);
+  );
+};
 
 const WorkerNavigation: React.FC = () => (
   <WorkerStack.Navigator
@@ -141,6 +151,7 @@ const WorkerNavigation: React.FC = () => (
     <WorkerStack.Screen name="WorkerTabs" component={WorkerTabs} options={{ headerShown: false }} />
     <WorkerStack.Screen name="DeliveryDetail" component={DeliveryDetailScreen} options={{ title: 'Çatdırılma' }} />
     <WorkerStack.Screen name="CustomerDetail" component={CustomerDetailScreen} options={{ title: 'Müştəri' }} />
+    <WorkerStack.Screen name="Prices" component={PricesScreen} options={{ title: 'Qiymətlər' }} />
     <WorkerStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ title: 'Şifrəni dəyiş' }} />
   </WorkerStack.Navigator>
 );
@@ -236,6 +247,9 @@ const AdminNavigation: React.FC = () => (
     <AdminStack.Screen name="CustomerDetail" component={CustomerDetailScreen} options={{ title: 'Müştəri' }} />
     <AdminStack.Screen name="WorkerDetail" component={WorkerDetailScreen} options={{ title: 'İşçi profili' }} />
     <AdminStack.Screen name="WorkerForm" component={WorkerFormScreen} options={{ title: 'İşçi hesabı' }} />
+    <AdminStack.Screen name="Prices" component={PricesScreen} options={{ title: 'Qiymətlər' }} />
+    <AdminStack.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Xərclər' }} />
+    <AdminStack.Screen name="Deposits" component={DepositsScreen} options={{ title: 'Depozitlər' }} />
     <AdminStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ title: 'Şifrəni dəyiş' }} />
   </AdminStack.Navigator>
 );

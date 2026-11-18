@@ -492,3 +492,78 @@ td.actions { white-space: nowrap; }
   z-index: 25;
 }
 @media (min-width: 861px) { .scrim { display: none; } }
+
+/* ------------------------------------------------- warehouse module ---- */
+/*
+ * Bulaq and Filtr are two different stocks, so they get two different cards
+ * with two different colours. They are never collapsed into one number except
+ * where the label explicitly says "cəmi".
+ */
+.wh-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.water-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+
+.water-card.spring { border-left-color: #0b6fa4; background: linear-gradient(180deg, #f2f9fd, #fff 58%); }
+.water-card.filtered { border-left-color: #17795e; background: linear-gradient(180deg, #f0faf6, #fff 58%); }
+.water-card.total { border-left-color: #b7791f; background: linear-gradient(180deg, #fdf8ee, #fff 58%); }
+
+.water-card-label { font-size: 13px; font-weight: 600; color: var(--muted); }
+.water-card-value {
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.05;
+  margin: 6px 0 2px;
+  color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
+}
+.water-card.spring .water-card-value { color: #075276; }
+.water-card.filtered .water-card-value { color: #11604a; }
+.water-card.total .water-card-value { color: #8a5a12; }
+.water-card-unit { font-size: 12px; color: var(--muted); }
+
+.badge-spring { background: #e6f2f8; color: #075276; }
+.badge-filtered { background: #e3f5ee; color: #11604a; }
+
+.nav-badge {
+  min-width: 20px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.filter-bar { gap: 7px; }
+.filter-bar input, .filter-bar select { min-width: 118px; }
+.filter-bar .btn { flex: 0 0 auto; }
+.stats-row .card-value { font-size: 20px; }
+
+@media (max-width: 760px) {
+  .wh-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .water-card { padding: 13px 14px; }
+  .water-card.total { grid-column: 1 / -1; }
+  .water-card-value { font-size: 30px; }
+  .filter-bar input, .filter-bar select { flex: 1 1 130px; min-width: 0; }
+  .filter-bar .btn { flex: 1 1 auto; }
+}
+
+@media (max-width: 460px) {
+  .wh-grid { grid-template-columns: 1fr; }
+  .water-card.total { grid-column: auto; }
+}

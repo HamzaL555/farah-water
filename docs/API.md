@@ -40,7 +40,12 @@ Bütün endpoint-lər ( `/auth/login`, `/auth/refresh`, `/health` və `GET /` is
 
 **Qeyd:** `POST /users` cavabında `temporaryPassword` bir dəfə qaytarılır və
 `mustChangePassword=true` qoyulur. **Rol** sahəsi yoxdur — istifadəçi yalnız işçi
-yarada bilər.
+yarada bilər. Yeni işçi üçün `workerType` seçilir:
+
+- `WAREHOUSE_KEEPER` — anbardar; anbar əməliyyatlarına girişi var.
+- `REGULAR` — adi işçi; yalnız öz bidon balansını görür (default).
+
+`workerType` yalnız ADMIN tərəfindən `PATCH /users/:id` ilə dəyişdirilir.
 
 ## customers
 
@@ -76,16 +81,42 @@ Filtrlər: `workerId` `customerId` `status` `search` `preset` `from` `to` `onlyD
 
 ## inventory
 
+Bulaq suyu (`SPRING`) və Filtr suyu (`FILTERED`) hər yerdə **ayrı** balansdır.
+`waterType` göndərilməsə `FILTERED` qəbul edilir.
+
+| Metod | Yol | Rol | Qeyd |
+|---|---|---|---|
+| GET | `/inventory/summary` | ADMIN, anbardar | Anbar və işçilər üzrə ayrı-ayrı saylar |
+| GET | `/inventory/my-stock` | hər ikisi | Yalnız öz balansı |
+| GET | `/inventory/transactions` | hər ikisi | Adi işçi yalnız öz sətirlərini görür |
+| POST | `/inventory/stock-in` | anbardar | `{waterType,bottleCount,note?,idempotencyKey?}` |
+| POST | `/inventory/distribute` | ADMIN, anbardar | `{workerId,waterType,bottleCount}` — anbardan işçiyə |
+| POST | `/inventory/issue` | anbardar | Anbardan öz əlinə |
+| POST | `/inventory/return` | anbardar | `workerId` verilsə həmin işçidən anbara; verilməsə öz əlindən |
+| POST | `/inventory/write-off` | anbardar | `{type:DAMAGE\|LOSS,waterType,bottleCount,note}` — səbəb məcburi |
+| POST | `/inventory/warehouse-write-off` | anbardar | Anbardan birbaşa çıxarış; səbəb məcburi |
+| GET | `/inventory/worker/:id` | ADMIN, anbardar | Bir işçinin ayrı-ayrı balansı |
+
+Tarixçə filtrləri: `type` `waterType` `workerId` `createdById` `deliveryId`
+`preset` `from` `to` `page` `pageSize`.
+
+> Hər `InventoryTransaction` sətri dəyişməzdir: bazada `UPDATE` və `DELETE`
+> trigger-ləri ilə bloklanır. Səhv əməliyyat **yeni** düzəliş sətri ilə
+> düzəldilir; əvvəlki qeyd silinmir. Hər sətirdə `beforeBalance`, `afterBalance`
+> və saniyə dəqiqliyi ilə `occurredAt` saxlanılır.
+
+## notifications
+
 | Metod | Yol | Rol |
 |---|---|---|
-| GET | `/inventory/summary` | hər ikisi |
-| GET | `/inventory/my-stock` | hər ikisi |
-| GET | `/inventory/transactions` | hər ikisi |
-| POST | `/inventory/stock-in` | ADMIN |
-| POST | `/inventory/issue` | ADMIN |
-| POST | `/inventory/return` | hər ikisi |
-| POST | `/inventory/write-off` | hər ikisi |
-| GET | `/inventory/worker/:id` | ADMIN |
+| GET | `/notifications` | ADMIN |
+| GET | `/notifications/unread-count` | ADMIN |
+| PATCH | `/notifications/:id/read` | ADMIN |
+| PATCH | `/notifications/read-all` | ADMIN |
+
+Hər anbar əməliyyatı (qəbul, çıxarış, işçiyə verilmə, çatdırılmada istifadə,
+qaytarma, ləğv, düzəliş) administrator üçün bildiriş yaradır: icraçı, əməliyyat
+növü, su növü, say, əvvəlki/sonrakı balans və dəqiq vaxt (saniyə ilə).
 
 ## dashboard
 

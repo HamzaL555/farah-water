@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role, WaterType, WorkerType } from '@prisma/client';
 import { config } from '../config';
 import { prisma } from '../prisma';
 import { badRequest, conflict, forbidden, notFound } from '../common/utils/errors';
@@ -12,6 +12,7 @@ export interface Actor {
   id: string;
   role: Role;
   fullName: string;
+  workerType?: WorkerType | null;
 }
 
 /** Only digits, optional leading +, 7-20 chars. */
@@ -47,6 +48,8 @@ export interface CreateWorkerInput {
   phone?: string;
   email?: string;
   password?: string;
+  /** Anbardar (WAREHOUSE_KEEPER) or adi isci (REGULAR). */
+  workerType?: WorkerType;
 }
 
 /**
@@ -88,6 +91,7 @@ export async function createWorker(input: CreateWorkerInput, actor: Actor, req?:
       email,
       passwordHash: await bcrypt.hash(password, config.security.bcryptRounds),
       role: Role.WORKER,
+      workerType: input.workerType ?? WorkerType.REGULAR,
       mustChangePassword: generated,
       isActive: true,
     },
@@ -110,7 +114,13 @@ export async function createWorker(input: CreateWorkerInput, actor: Actor, req?:
 
 export async function updateWorker(
   id: string,
-  patch: { fullName?: string; phone?: string | null; email?: string | null; isActive?: boolean },
+  patch: {
+    fullName?: string;
+    phone?: string | null;
+    email?: string | null;
+    isActive?: boolean;
+    workerType?: WorkerType;
+  },
   actor: Actor,
   req?: never,
 ) {
@@ -130,6 +140,9 @@ export async function updateWorker(
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw badRequest('E-mail ünvanı düzgün deyil.');
     data.email = email;
   }
+  // Only an admin reaches this function, so the worker type may only ever be
+  // reassigned by an admin - exactly as the module requires.
+  if (patch.workerType !== undefined) data.workerType = patch.workerType;
   if (patch.isActive !== undefined) {
     // Guard against an admin locking themselves (and any other admin) out.
     if (before.role === Role.ADMIN && !patch.isActive) {
@@ -287,14 +300,18 @@ export async function listWorkersWithStats(actor: Actor) {
     const p = map(todayPayments).get(w.id);
     const t = map(totalDeliveries).get(w.id);
     const debt = map(debtAgg).get(w.id);
-    const balance = balances.find((b) => b.workerId === w.id);
+    const own = balances.filter((b) => b.workerId === w.id);
+    const assignedFiltered = own.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;
+    const assignedSpring = own.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;
     return {
       ...serializeUser(w),
       todayBottles: d?._sum.bottleCount ?? 0,
       todayDeliveries: d?._count._all ?? 0,
       todayCollected: Number((p?._sum.amount ?? new Prisma.Decimal(0)).toFixed(2)),
       todayPayments: p?._count._all ?? 0,
-      assignedBottles: balance?.quantity ?? 0,
+      assignedBottles: assignedFiltered + assignedSpring,
+      assignedFiltered,
+      assignedSpring,
       totalDeliveries: t?._count._all ?? 0,
       totalBottles: t?._sum.bottleCount ?? 0,
       outstandingDebt: Number((debt?._sum.debtAmount ?? new Prisma.Decimal(0)).toFixed(2)),
@@ -310,7 +327,13 @@ export async function getWorkerDetail(id: string, actor: Actor) {
   const worker = await prisma.user.findUnique({ where: { id } });
   if (!worker) throw notFound('İşçi tapılmadı.');
 
-  const balance = await prisma.inventoryBalance.findUnique({ where: { key: `WORKER:${id}` } });
+  // One row per water type since the split, so both are read and summed.
+  const balances = await prisma.inventoryBalance.findMany({
+    where: { workerId: id, scope: 'WORKER' },
+    select: { waterType: true, quantity: true },
+  });
+  const filtered = balances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;
+  const spring = balances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;
   const debt = await prisma.delivery.aggregate({
     where: { workerId: id, debtAmount: { gt: 0 }, status: { not: 'CANCELLED' } },
     _sum: { debtAmount: true },
@@ -318,7 +341,9 @@ export async function getWorkerDetail(id: string, actor: Actor) {
 
   return {
     ...serializeUser(worker),
-    stockInHand: balance?.quantity ?? 0,
+    // Bulaq and Filtr are kept apart everywhere; the total is only a summary.
+    stockByType: { filtered, spring, total: filtered + spring },
+    stockInHand: filtered + spring,
     outstandingDebt: Number((debt._sum.debtAmount ?? new Prisma.Decimal(0)).toFixed(2)),
   };
 }

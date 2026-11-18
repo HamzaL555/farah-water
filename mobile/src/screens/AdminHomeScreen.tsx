@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { View, ScrollView, StyleSheet, RefreshControl, Text } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ActivityIndicator, Chip, Menu, Button } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatCard } from '../components/StatCard';
@@ -13,9 +15,12 @@ import { dashboardApi } from '../services/endpoints';
 import { formatMoney } from '../utils/format';
 import { colors, spacing, radius } from '../theme';
 import type { DateRangePreset } from '../types';
-import type { AdminTabParamList } from '../navigation/types';
+import type { AdminStackParamList, AdminTabParamList } from '../navigation/types';
 
-type Nav = BottomTabNavigationProp<AdminTabParamList, 'AdminHome'>;
+type Nav = CompositeNavigationProp<
+  BottomTabNavigationProp<AdminTabParamList, 'AdminHome'>,
+  NativeStackNavigationProp<AdminStackParamList>
+>;
 
 const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
   { value: 'today', label: 'Bu gün' },
@@ -161,6 +166,80 @@ export const AdminHomeScreen: React.FC = () => {
           />
         </View>
 
+        {/* --- Money split by water type ------------------------------------- */}
+        {/* The two waters never merge into one number. An expense with no
+            water type only touches the overall profit, which is why the overall
+            card is shown separately instead of being the sum of the other two. */}
+        <Text style={styles.groupTitle}>Su növü üzrə (seçilmiş dövr)</Text>
+        <View style={styles.row}>
+          <StatCard
+            label="Filtr gəliri"
+            value={formatMoney(data?.finance.revenueByWater?.filtered ?? 0)}
+            icon="💧"
+            accent={colors.success}
+            background={colors.successBg}
+          />
+          <StatCard
+            label="Bulaq gəliri"
+            value={formatMoney(data?.finance.revenueByWater?.spring ?? 0)}
+            icon="🏔️"
+            accent={colors.info}
+            background={colors.infoBg}
+          />
+        </View>
+        <View style={styles.row}>
+          <StatCard
+            label="Filtr mənfəəti"
+            value={formatMoney(data?.finance.profit?.filtered ?? 0)}
+            icon="📈"
+            accent={colors.success}
+            background={colors.successBg}
+          />
+          <StatCard
+            label="Bulaq mənfəəti"
+            value={formatMoney(data?.finance.profit?.spring ?? 0)}
+            icon="📈"
+            accent={colors.info}
+            background={colors.infoBg}
+          />
+        </View>
+
+        <Text style={styles.groupTitle}>Xərc və depozit</Text>
+        <View style={styles.row}>
+          <StatCard
+            label="Ümumi xərc"
+            value={formatMoney(data?.finance.expensesByWater?.total ?? 0)}
+            icon="🧾"
+            accent={colors.danger}
+            background={colors.dangerBg}
+            onPress={() => navigation.navigate('Expenses')}
+          />
+          <StatCard
+            label="Ümumi mənfəət"
+            value={formatMoney(data?.finance.profit?.total ?? 0)}
+            icon="💰"
+            accent={(data?.finance.profit?.total ?? 0) >= 0 ? colors.success : colors.danger}
+            background={(data?.finance.profit?.total ?? 0) >= 0 ? colors.successBg : colors.dangerBg}
+          />
+        </View>
+        <View style={styles.row}>
+          <StatCard
+            label="Depozitdə saxlanan"
+            value={formatMoney(data?.finance.depositsHeld ?? 0)}
+            icon="🔒"
+            accent={colors.primary}
+            onPress={() => navigation.navigate('Deposits')}
+          />
+          <StatCard
+            label="Gözləyən qiymət sorğusu"
+            value={String(data?.finance.pendingPriceRequests ?? 0)}
+            icon="💵"
+            accent={colors.warning}
+            background={colors.warningBg}
+            onPress={() => navigation.navigate('Prices')}
+          />
+        </View>
+
         {/* --- Inventory ----------------------------------------------------- */}
         <Text style={styles.groupTitle}>Anbar</Text>
         <View style={styles.row}>
@@ -215,6 +294,15 @@ export const AdminHomeScreen: React.FC = () => {
           </Chip>
           <Chip icon="shield-check" onPress={() => navigation.navigate('AuditLog')}>
             Audit jurnalı
+          </Chip>
+          <Chip icon="currency-usd" onPress={() => navigation.navigate('Prices')}>
+            Qiymətlər
+          </Chip>
+          <Chip icon="receipt" onPress={() => navigation.navigate('Expenses')}>
+            Xərclər
+          </Chip>
+          <Chip icon="water" onPress={() => navigation.navigate('Deposits')}>
+            Depozitlər
           </Chip>
         </View>
       </ScrollView>

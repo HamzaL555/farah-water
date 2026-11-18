@@ -18,6 +18,10 @@ import { dashboardRouter } from './dashboard/dashboard.routes';
 import { reportsRouter } from './reports/reports.routes';
 import { auditRouter } from './audit/audit.routes';
 import { deliveryCorrectionsRouter } from './delivery-corrections/delivery-corrections.routes';
+import { notificationsRouter } from './notifications/notification.routes';
+import { depositsRouter } from './deposits/deposits.routes';
+import { pricesRouter } from './prices/prices.routes';
+import { expensesRouter } from './expenses/expenses.routes';
 
 export function createApp(): Express {
   const app = express();
@@ -85,6 +89,10 @@ export function createApp(): Express {
   api.use('/reports', reportsRouter);
   api.use('/audit', auditRouter);
   api.use('/delivery-corrections', deliveryCorrectionsRouter);
+  api.use('/notifications', notificationsRouter);
+  api.use('/deposits', depositsRouter);
+  api.use('/prices', pricesRouter);
+  api.use('/expenses', expensesRouter);
 
   app.use(config.apiPrefix, api);
 

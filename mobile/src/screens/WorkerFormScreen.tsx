@@ -10,11 +10,13 @@ import {
   Switch,
   Portal,
   Dialog,
+  SegmentedButtons,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAsync, useSubmit } from '../hooks/useAsync';
 import { usersApi } from '../services/endpoints';
 import { colors, spacing, radius } from '../theme';
+import type { WorkerType } from '../types';
 import type { AdminStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<AdminStackParamList, 'WorkerForm'>;
@@ -41,6 +43,8 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isActive, setIsActive] = useState(true);
+  // Anbardar runs the warehouse; adi isci only ever sees their own balance.
+  const [workerType, setWorkerType] = useState<WorkerType>('REGULAR');
   const [touched, setTouched] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
   const [generatedPassword, setGeneratedPassword] = useState<string | null>(null);
@@ -53,6 +57,7 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
     setPhone(existing.phone ?? '');
     setEmail(existing.email ?? '');
     setIsActive(existing.isActive);
+    setWorkerType(existing.workerType === 'WAREHOUSE_KEEPER' ? 'WAREHOUSE_KEEPER' : 'REGULAR');
     setSeeded(true);
   }
 
@@ -77,6 +82,7 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
       email: email.trim() || undefined,
       // An empty password means "let the system generate one".
       password: password.trim() ? password.trim() : undefined,
+      workerType,
     });
     return res.data;
   });
@@ -87,6 +93,7 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
       phone: phone.trim() || null,
       email: email.trim() || null,
       isActive,
+      workerType,
     });
     return true;
   });
@@ -160,6 +167,21 @@ export const WorkerFormScreen: React.FC<Props> = ({ route }) => {
             autoCapitalize="none"
             style={styles.input}
           />
+
+          <Text style={styles.typeLabel}>İşçi növü</Text>
+          <SegmentedButtons
+            value={workerType}
+            onValueChange={(v) => setWorkerType(v as WorkerType)}
+            buttons={[
+              { value: 'REGULAR', label: 'Adi işçi' },
+              { value: 'WAREHOUSE_KEEPER', label: 'Anbardar' },
+            ]}
+            style={styles.typeSegment}
+          />
+          <HelperText type="info" style={styles.hint}>
+            Anbardar anbara mal qəbul edir, işçilərə bidon verir və anbar qalığını görür. Adi işçi
+            yalnız öz balansını görür.
+          </HelperText>
 
           {!editingId ? (
             <>
@@ -253,6 +275,8 @@ const styles = StyleSheet.create({
   scroll: { padding: spacing.md, paddingBottom: spacing.xxl * 2 },
   input: { backgroundColor: colors.surface, marginBottom: spacing.xs },
   hint: { marginBottom: spacing.sm, marginTop: -2 },
+  typeLabel: { fontSize: 12, color: colors.textMuted, marginTop: spacing.xs },
+  typeSegment: { marginBottom: spacing.xs },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',

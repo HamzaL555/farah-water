@@ -5,6 +5,8 @@ import type {
   CreateAdjustmentPayload,
   CreateCustomerPayload,
   CreateDeliveryPayload,
+  CreateDepositPayload,
+  CreateExpensePayload,
   CreatePaymentPayload,
   CreateWorkerPayload,
   ListCustomersParams,
@@ -21,21 +23,32 @@ import type {
   AuditLogEntry,
   Company,
   Customer,
+  CustomerDeposit,
   CustomerDetail,
+  DateRangePreset,
   DebtSummaryRow,
   Delivery,
   DeliveryDetail,
   DeliveryStatus,
+  Expense,
+  ExpenseCategory,
   InventorySummary,
   InventoryTransaction,
+  MyStock,
   Paginated,
   PaginatedAmounts,
   Payment,
+  PriceChangeRequest,
+  PriceHistoryEntry,
+  PriceRequestStatus,
   Report,
   RevenueBreakdown,
   User,
+  WaterPrice,
+  WaterType,
   WorkerDashboard,
   WorkerStats,
+  WorkerType,
 } from '../types';
 
 export interface CreatedWorker {
@@ -88,8 +101,16 @@ export const usersApi = {
     apiClient.get<Paginated<User>>('/users', params as Record<string, unknown>),
   stats: () => apiClient.get<WorkerStats[]>('/users/stats'),
   create: (payload: CreateWorkerPayload) => apiClient.post<CreatedWorker>('/users', payload),
-  update: (id: string, patch: { fullName?: string; phone?: string | null; email?: string | null; isActive?: boolean }) =>
-    apiClient.patch<User>(`/users/${id}`, patch),
+  update: (
+    id: string,
+    patch: {
+      fullName?: string;
+      phone?: string | null;
+      email?: string | null;
+      isActive?: boolean;
+      workerType?: WorkerType;
+    },
+  ) => apiClient.patch<User>(`/users/${id}`, patch),
   resetPassword: (id: string) => apiClient.post<{ temporaryPassword: string }>(`/users/${id}/reset-password`),
   detail: (id: string) => apiClient.get<User & { stockInHand: number; outstandingDebt: number }>(`/users/${id}`),
 };
@@ -165,25 +186,94 @@ export interface StockResult {
 
 export const inventoryApi = {
   summary: () => apiClient.get<InventorySummary>('/inventory/summary'),
-  myStock: () => apiClient.get<{ quantity: number; updatedAt: string | null }>('/inventory/my-stock'),
+  myStock: () => apiClient.get<MyStock>('/inventory/my-stock'),
   transactions: (params: ListInventoryParams) =>
     apiClient.get<Paginated<InventoryTransaction>>('/inventory/transactions', params as Record<string, unknown>),
   stockIn: (payload: StockMovementPayload) => apiClient.post<StockResult>('/inventory/stock-in', payload),
   /**
-   * Takes bottles out of the warehouse into the caller's own hands. No workerId:
-   * a worker can only move stock to themselves, and the server refuses anyone
-   * else.
+   * Takes bottles out of the warehouse into the caller's own hands. Keeper only:
+   * a regular worker receives stock from the anbardar through `distribute`.
    */
   takeFromWarehouse: (payload: StockMovementPayload) => apiClient.post<StockResult>('/inventory/issue', payload),
-  returnStock: (payload: StockMovementPayload & { workerId?: string }) =>
+  returnStock: (payload: StockMovementPayload) =>
     apiClient.post<StockResult>('/inventory/return', payload),
-  writeOff: (payload: {
-    type: 'DAMAGE' | 'LOSS';
-    bottleCount: number;
-    note: string;
-    workerId?: string;
-    idempotencyKey?: string;
-  }) => apiClient.post<StockResult>('/inventory/write-off', payload),
+  /** Anbardar handover: warehouse -> named worker, in one transaction. */
+  distribute: (payload: StockMovementPayload & { workerId: string }) =>
+    apiClient.post<StockResult>('/inventory/distribute', payload),
+  writeOff: (payload: StockMovementPayload & { type: 'DAMAGE' | 'LOSS'; note: string }) =>
+    apiClient.post<StockResult>('/inventory/write-off', payload),
+  /** Write-off taken directly out of the warehouse, with a mandatory reason. */
+  warehouseWriteOff: (payload: StockMovementPayload & { type: 'DAMAGE' | 'LOSS'; note: string }) =>
+    apiClient.post<StockResult>('/inventory/warehouse-write-off', payload),
+};
+
+// -------------------------------- deposits ---------------------------------
+
+export const depositsApi = {
+  list: (params: {
+    customerId?: string;
+    type?: 'DEPOSIT_IN' | 'DEPOSIT_OUT' | 'ADJUSTMENT';
+    preset?: DateRangePreset;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+  }) =>
+    apiClient.get<Paginated<CustomerDeposit> & { totals: { amount: number; bottleCount: number } }>(
+      '/deposits',
+      params as Record<string, unknown>,
+    ),
+  summary: (customerId: string) =>
+    apiClient.get<{ balance: number; bottleBalance: number; movements: number; lastMovementAt: string | null }>(
+      `/deposits/summary/${customerId}`,
+    ),
+  create: (payload: CreateDepositPayload) =>
+    apiClient.post<{ deposit: CustomerDeposit; duplicate: boolean; balance: number; bottleBalance: number }>(
+      '/deposits',
+      payload,
+    ),
+};
+
+// --------------------------------- prices ----------------------------------
+
+export const pricesApi = {
+  /** Both sale prices; readable by every role. */
+  list: () => apiClient.get<WaterPrice[]>('/prices'),
+  /** Admin-only direct change. */
+  set: (waterType: WaterType, price: string, note?: string) =>
+    apiClient.put<{ changed: boolean; waterType: WaterType; price: number; oldPrice: number }>(
+      `/prices/${waterType}`,
+      { price, note },
+    ),
+  /** Worker asks; nothing changes until an admin approves. */
+  request: (waterType: WaterType, newPrice: string, reason: string) =>
+    apiClient.post<PriceChangeRequest>('/prices/requests', { waterType, newPrice, reason }),
+  requests: (params: { status?: PriceRequestStatus; waterType?: WaterType; page?: number; pageSize?: number }) =>
+    apiClient.get<Paginated<PriceChangeRequest>>('/prices/requests', params as Record<string, unknown>),
+  review: (id: string, action: 'APPROVE' | 'REJECT', note?: string) =>
+    apiClient.patch<{ request: PriceChangeRequest; historyId: string | null; price: number | null }>(
+      `/prices/requests/${id}`,
+      { action, note },
+    ),
+  history: (params: { waterType?: WaterType; page?: number; pageSize?: number }) =>
+    apiClient.get<Paginated<PriceHistoryEntry>>('/prices/history', params as Record<string, unknown>),
+};
+
+// -------------------------------- expenses ---------------------------------
+
+export const expensesApi = {
+  list: (params: {
+    category?: ExpenseCategory;
+    waterType?: WaterType;
+    from?: string;
+    to?: string;
+    includeVoided?: boolean;
+    page?: number;
+    pageSize?: number;
+  }) => apiClient.get<Paginated<Expense> & { totalAmount: number }>('/expenses', params as Record<string, unknown>),
+  create: (payload: CreateExpensePayload) =>
+    apiClient.post<{ expense: Expense; duplicate: boolean }>('/expenses', payload),
+  void: (id: string, reason: string) => apiClient.post<Expense>(`/expenses/${id}/void`, { reason }),
 };
 
 // --------------------------------- reports ---------------------------------

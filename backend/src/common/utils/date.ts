@@ -100,6 +100,25 @@ export function formatDDMMYYYYHHMM(value: Date | string | null | undefined): str
   return date && time ? `${date} ${time}` : date || time;
 }
 
+/**
+ * Date and time with seconds - `02.11.2026 00:21:35`.
+ *
+ * The warehouse ledger is immutable, so two movements recorded in the same
+ * minute must still be told apart by an admin reconciling who handed what to
+ * whom. Minutes are not enough for that.
+ */
+export function formatDDMMYYYYHHMMSS(value: Date | string | null | undefined): string {
+  const date = formatDDMMYYYY(value);
+  if (!date || !value) return date;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return date;
+  const shifted = new Date(d.getTime() + tzOffsetMinutes() * 60_000);
+  const hh = String(shifted.getUTCHours()).padStart(2, '0');
+  const mm = String(shifted.getUTCMinutes()).padStart(2, '0');
+  const ss = String(shifted.getUTCSeconds()).padStart(2, '0');
+  return `${date} ${hh}:${mm}:${ss}`;
+}
+
 export type DateRangePreset =
   | 'today'
   | 'yesterday'

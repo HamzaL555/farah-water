@@ -91,6 +91,22 @@ export const ProfileScreen: React.FC = () => {
           <KeyValueRow label="Server" value={isConnected ? 'Qoşulub' : 'Yoxdur'} valueColor={isConnected ? colors.success : colors.danger} />
         </SectionCard>
 
+        <SectionCard title="Qiymətlər və maliyyə" subtitle={isAdmin ? 'Qiymət, xərc və depozitlər' : 'Satış qiymətləri'}>
+          <Button mode="outlined" icon="currency-usd" onPress={() => navigation.navigate('Prices')}>
+            {isAdmin ? 'Qiymətləri idarə et' : 'Qiymətlər / sorğu göndər'}
+          </Button>
+          {isAdmin ? (
+            <>
+              <Button mode="outlined" icon="receipt" onPress={() => navigation.navigate('Expenses')}>
+                Xərclər
+              </Button>
+              <Button mode="outlined" icon="water" onPress={() => navigation.navigate('Deposits')}>
+                Müştəri depozitləri
+              </Button>
+            </>
+          ) : null}
+        </SectionCard>
+
         <SectionCard title="Təhlükəsizlik">
           <Button mode="outlined" icon="lock" onPress={() => navigation.navigate('ChangePassword')}>
             Şifrəni dəyiş

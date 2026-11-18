@@ -103,7 +103,11 @@ export const NewDeliveryScreen: React.FC = () => {
     address: destinationType === 'HOME' ? address.trim() : undefined,
     contactPhone: contactPhone.trim() || undefined,
     bottleCount: count,
-    deliveredAt,
+    // A delivery saved for today happened now, so it carries the exact second;
+    // the backend would otherwise read a bare date as the start of the day.
+    // Backdated deliveries keep their date-only value because no clock time
+    // was ever known for them.
+    deliveredAt: deliveredAt === todayInputValue() ? new Date().toISOString() : deliveredAt,
     note: note.trim() || undefined,
   });
 
@@ -252,7 +256,7 @@ export const NewDeliveryScreen: React.FC = () => {
               {addressError ? <HelperText type="error">{addressError}</HelperText> : null}
               <View style={styles.priceNote}>
                 <Text style={styles.priceNoteText}>
-                  Qiyməti siz yazmırsınız. Admin qiyməti və alınan pulu sonra daxil edəcək.
+                  Qiymət cari qiymət siyahısından götürülür. Alınan pulu admin sonra daxil edir.
                 </Text>
               </View>
             </>

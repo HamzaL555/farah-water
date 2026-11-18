@@ -46,6 +46,7 @@ export const meController = asyncHandler(async (req: Request, res: Response) => 
       phone: true,
       email: true,
       role: true,
+      workerType: true,
       isActive: true,
       mustChangePassword: true,
       lastLoginAt: true,

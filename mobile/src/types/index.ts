@@ -1,5 +1,8 @@
 export type Role = 'ADMIN' | 'WORKER';
 
+/** The admin decides which warehouse rights a worker has. */
+export type WorkerType = 'WAREHOUSE_KEEPER' | 'REGULAR';
+
 export type DeliveryStatus = 'UNPAID' | 'PARTIAL' | 'PAID' | 'CANCELLED';
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
 
@@ -31,6 +34,8 @@ export interface User {
   phone: string | null;
   email: string | null;
   role: Role;
+  /** Null for admins; WAREHOUSE_KEEPER or REGULAR for workers. */
+  workerType: WorkerType | null;
   isActive: boolean;
   mustChangePassword: boolean;
   lastLoginAt: string | null;
@@ -62,11 +67,38 @@ export interface Customer {
   totalBottles: number;
   totalDelivered: number;
   lastDeliveryAt: string | null;
+  /** Admin only: money the company holds for this customer's bottles. */
+  depositBalance?: number;
+  /** Admin only: how many bottles that deposit covers. */
+  depositBottleBalance?: number;
+}
+
+/** One signed row of the append-only customer deposit ledger. */
+export type DepositTxType = 'DEPOSIT_IN' | 'DEPOSIT_OUT' | 'ADJUSTMENT';
+
+export interface CustomerDeposit {
+  id: string;
+  customerId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  type: DepositTxType;
+  /** Signed: positive money in, negative money refunded/adjusted away. */
+  amount: number;
+  bottleCount: number;
+  balanceAfter: number;
+  bottleBalanceAfter: number;
+  note: string | null;
+  occurredAt: string | null;
+  createdById: string;
+  createdByName: string | null;
+  createdAt: string | null;
 }
 
 export interface CustomerDetail extends Customer {
   totalPaid: number;
   deliveries: Delivery[];
+  depositMovements?: number;
+  deposits?: CustomerDeposit[];
 }
 
 export interface Delivery {
@@ -160,6 +192,8 @@ export interface InventoryTransaction {
   direction: number;
   signedCount: number;
   balanceKey: string;
+  /** Bulaq or Filtr: the movement never mixes the two. */
+  waterType: WaterType;
   workerId: string | null;
   workerName: string | null;
   deliveryId: string | null;
@@ -223,6 +257,14 @@ export interface AdminDashboard {
     totalOutstandingDebt: number;
     debtorCustomers: number;
     undeliveredValueInRange: number;
+    /** Revenue from real payments only, split by water type. */
+    revenueByWater?: { filtered: number; spring: number; total: number; payments: number };
+    expensesByWater?: { filtered: number; spring: number; shared: number; total: number };
+    profit?: { filtered: number; spring: number; total: number };
+    /** Held money - never part of revenue. */
+    depositsHeld?: number;
+    depositBottlesHeld?: number;
+    pendingPriceRequests?: number;
   };
   deliveries: {
     todayCount: number;
@@ -243,8 +285,21 @@ export interface RevenueBreakdown {
   }>;
 }
 
+export interface WaterSplit {
+  filtered: number;
+  spring: number;
+  total: number;
+}
+
 export interface InventorySummary {
+  /** Bulaq and Filtr are always separate; `total` is their explicit sum. */
+  warehouse: WaterSplit;
+  /** Pre-split alias for `warehouse.total`. */
   warehouseQuantity: number;
+  inbound: WaterSplit;
+  outbound: WaterSplit;
+  issuedToWorkers: WaterSplit;
+  returned: WaterSplit;
   inWorkersHands: number;
   totalSystemQuantity: number;
   todayInbound: number;
@@ -255,9 +310,90 @@ export interface InventorySummary {
     workerId: string;
     workerName: string;
     username: string;
+    workerType: WorkerType | null;
     isActive: boolean;
-    quantity: number;
+    filteredQty: number;
+    springQty: number;
+    totalQty: number;
   }>;
+}
+
+/** A worker's own handheld stock, split by water type. */
+export interface MyStock {
+  filteredQty: number;
+  springQty: number;
+  totalQty: number;
+  /** Alias for `totalQty`, kept for older clients. */
+  quantity: number;
+  updatedAt: string | null;
+}
+
+// -------------------------------- prices -----------------------------------
+
+export interface WaterPrice {
+  waterType: WaterType;
+  price: number;
+  effectiveFrom: string | null;
+  updatedAt: string | null;
+  updatedByName: string | null;
+}
+
+export type PriceRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface PriceChangeRequest {
+  id: string;
+  waterType: WaterType;
+  oldPrice: number;
+  newPrice: number;
+  reason: string;
+  status: PriceRequestStatus;
+  requestedAt: string | null;
+  requestedById: string;
+  requestedByName: string | null;
+  requestedByUsername: string | null;
+  reviewedAt: string | null;
+  reviewedById: string | null;
+  reviewedByName: string | null;
+  reviewNote: string | null;
+}
+
+export interface PriceHistoryEntry {
+  id: string;
+  waterType: WaterType;
+  oldPrice: number;
+  newPrice: number;
+  source: 'ADMIN' | 'PRICE_REQUEST';
+  requestId: string | null;
+  note: string | null;
+  occurredAt: string | null;
+  changedById: string;
+  changedByName: string | null;
+}
+
+// ------------------------------- expenses ----------------------------------
+
+export type ExpenseCategory =
+  | 'FUEL'
+  | 'SALARY'
+  | 'MAINTENANCE'
+  | 'RENT'
+  | 'UTILITIES'
+  | 'SUPPLIES'
+  | 'TRANSPORT'
+  | 'OTHER';
+
+export interface Expense {
+  id: string;
+  category: ExpenseCategory;
+  waterType: WaterType | null;
+  amount: number;
+  spentAt: string | null;
+  note: string | null;
+  createdById: string;
+  createdByName: string | null;
+  createdAt: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
 }
 
 export interface DebtSummaryRow {

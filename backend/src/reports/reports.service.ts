@@ -1,10 +1,12 @@
-import { DeliveryStatus, InventoryTxType, Prisma, PaymentMethod, Role } from '@prisma/client';
+import { DeliveryStatus, InventoryTxType, Prisma, PaymentMethod, Role, WaterType } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import { prisma } from '../prisma';
 import { forbidden } from '../common/utils/errors';
-import { resolveRange, DateRangePreset, formatDDMMYYYY, formatTimeHHMM } from '../common/utils/date';
-import { WAREHOUSE_KEY, workerKey } from '../inventory/inventory.service';
+import { resolveRange, DateRangePreset, formatDDMMYYYY, formatTimeHHMM, formatDDMMYYYYHHMMSS } from '../common/utils/date';
+import { warehouseKey, workerKey } from '../inventory/inventory.service';
+import { revenueByWater } from '../common/utils/finance';
+import { expenseTotalsByWater } from '../expenses/expenses.service';
 import { Actor } from '../users/users.service';
 
 const D = (v: Prisma.Decimal | null | undefined) => Number((v ?? new Prisma.Decimal(0)).toFixed(2));
@@ -113,6 +115,37 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
       ['Çatdırılma sayı', billedAgg._count._all],
       ['Qalan borc', D(billedAgg._sum.debtAmount)],
     ],
+  });
+
+  // ------------------- per-water revenue / expense / profit -----------------
+  // Bulaq and Filtr are never added into one column here: each water type gets
+  // its own line, and "Cəmi" is shown explicitly as the sum of the two.
+  const waterRevenue = await revenueByWater(start, end, workerId || null);
+  const waterRows: (string | number)[][] = [
+    ['Filtr suyu - gəlir', waterRevenue.filtered],
+    ['Bulaq suyu - gəlir', waterRevenue.spring],
+    ['Cəmi gəlir', waterRevenue.total],
+  ];
+
+  if (!workerId) {
+    const exp = await expenseTotalsByWater(start, end);
+    waterRows.push(
+      ['Filtr suyu - xərc', exp.filtered],
+      ['Bulaq suyu - xərc', exp.spring],
+      ['Ümumi (bölünməmiş) xərc', exp.shared],
+      ['Cəmi xərc', exp.total],
+      ['Filtr suyu - mənfəət', waterRevenue.filtered - exp.filtered],
+      ['Bulaq suyu - mənfəət', waterRevenue.spring - exp.spring],
+      ['Cəmi mənfəət', waterRevenue.total - exp.total],
+    );
+  }
+
+  // A customer deposit is held money, not income: it is listed separately so
+  // nobody can mistake it for revenue.
+  sections.push({
+    heading: 'Su növü üzrə gəlir' + (workerId ? '' : ', xərc və mənfəət'),
+    columns: ['Göstərici', 'Məbləğ (AZN)'],
+    rows: waterRows,
   });
 
   // --------------------------- deliveries ---------------------------------
@@ -250,8 +283,12 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
 
   // -------------------------- inventory -----------------------------------
   if (req.type === 'inventory' || req.type === 'period') {
-    const [warehouse, workerBalances, movements] = await Promise.all([
-      prisma.inventoryBalance.findUnique({ where: { key: WAREHOUSE_KEY }, select: { quantity: true } }),
+    const [warehouseRows, workerBalances, movements] = await Promise.all([
+      // Read per water type: Bulaq and Filtr are never summed into one figure.
+      prisma.inventoryBalance.findMany({
+        where: { key: { startsWith: 'WAREHOUSE' } },
+        select: { waterType: true, quantity: true },
+      }),
       prisma.inventoryBalance.findMany({
         where: { scope: 'WORKER' },
         include: { worker: { select: { fullName: true, username: true } } },
@@ -259,7 +296,7 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
       }),
       prisma.inventoryTransaction.findMany({
         where: {
-          ...(workerId ? { OR: [{ workerId }, { balanceKey: WAREHOUSE_KEY }] } : {}),
+          ...(workerId ? { OR: [{ workerId }, { balanceKey: { startsWith: 'WAREHOUSE' } }] } : {}),
           ...(start || end ? { occurredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
         },
         orderBy: { occurredAt: 'desc' },
@@ -268,22 +305,37 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
       }),
     ]);
 
+    const warehouseOf = (t: WaterType) => warehouseRows.find((r) => r.waterType === t)?.quantity ?? 0;
+    const handsOf = (t: WaterType) =>
+      workerBalances.filter((b) => b.waterType === t).reduce((s, b) => s + b.quantity, 0);
+
     sections.push({
       heading: 'Anbar vəziyyəti',
       columns: ['Sahə', 'Say'],
       rows: [
-        ['Anbarda qalan bidon', warehouse?.quantity ?? 0],
-        ['İşçilərin əlindəki bidonlar', workerBalances.reduce((s, b) => s + b.quantity, 0)],
-        ...workerBalances.filter((b) => b.worker).map((b) => [`  - ${b.worker!.fullName} (${b.worker!.username})`, b.quantity]),
+        ['Filtr suyu — anbarda qalan', warehouseOf(WaterType.FILTERED)],
+        ['Bulaq suyu — anbarda qalan', warehouseOf(WaterType.SPRING)],
+        ['Cəmi anbarda', warehouseRows.reduce((s, r) => s + r.quantity, 0)],
+        ['Filtr suyu — işçilərin əlində', handsOf(WaterType.FILTERED)],
+        ['Bulaq suyu — işçilərin əlində', handsOf(WaterType.SPRING)],
+        ['Cəmi işçilərin əlində', workerBalances.reduce((s, b) => s + b.quantity, 0)],
+        ...workerBalances
+          .filter((b) => b.worker && b.quantity !== 0)
+          .map((b) => [
+            `  - ${b.worker!.fullName} (${b.worker!.username}) [${WATER_TYPE_LABEL[b.waterType] ?? b.waterType}]`,
+            b.quantity,
+          ]),
       ],
     });
 
     sections.push({
       heading: 'İnventar tarixçəsi',
-      columns: ['Tarix', 'Saat', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],
+      columns: ['Tarix', 'Saat', 'Su növü', 'Əməliyyat', 'Say', 'İşçi', 'Qeyd'],
       rows: movements.map((m) => [
         formatDDMMYYYY(m.occurredAt),
-        formatTimeHHMM(m.occurredAt),
+        // Seconds included: two movements in one minute stay distinguishable.
+        formatDDMMYYYYHHMMSS(m.occurredAt).slice(11),
+        WATER_TYPE_LABEL[m.waterType] ?? m.waterType,
         INVENTORY_TYPE_LABEL[m.type] ?? m.type,
         `${m.direction > 0 ? '+' : '-'}${m.bottleCount}`,
         m.worker?.fullName ?? '',

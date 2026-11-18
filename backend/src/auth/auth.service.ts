@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { Role } from '@prisma/client';
+import { Role, WorkerType } from '@prisma/client';
 import { config } from '../config';
 import { prisma } from '../prisma';
 import { audit } from '../common/utils/audit';
@@ -24,6 +24,9 @@ export interface PublicUser {
   phone: string | null;
   email: string | null;
   role: Role;
+  /// Anbardar vs adi işçi. The panel decides which pages to show from this,
+  /// and the API enforces the same distinction server-side.
+  workerType: WorkerType | null;
   isActive: boolean;
   mustChangePassword: boolean;
 }
@@ -47,6 +50,7 @@ function publicUser(user: {
   phone: string | null;
   email: string | null;
   role: Role;
+  workerType: WorkerType | null;
   isActive: boolean;
   mustChangePassword: boolean;
 }): PublicUser {
@@ -57,6 +61,7 @@ function publicUser(user: {
     phone: user.phone,
     email: user.email,
     role: user.role,
+    workerType: user.workerType,
     isActive: user.isActive,
     mustChangePassword: user.mustChangePassword,
   };

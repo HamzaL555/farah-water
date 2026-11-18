@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AuditLogEntry,
   Customer,
+  CustomerDeposit,
   CustomerDetail,
   DateRangePreset,
   DebtAdjustmentType,
@@ -11,19 +12,27 @@ import type {
   DeliveryDetail,
   DeliveryStatus,
   DestinationType,
+  Expense,
+  ExpenseCategory,
   InventorySummary,
   InventoryTransaction,
   InventoryTxType,
+  MyStock,
   Paginated,
   PaginatedAmounts,
   Payment,
   PaymentMethod,
+  PriceChangeRequest,
+  PriceRequestStatus,
+  PriceHistoryEntry,
   Report,
   RevenueBreakdown,
   User,
+  WaterPrice,
   WaterType,
   WorkerDashboard,
   WorkerStats,
+  WorkerType,
 } from '../types';
 
 /**
@@ -193,6 +202,8 @@ export interface CreateWorkerPayload {
   phone?: string;
   email?: string;
   password?: string;
+  /** Anbardar or adi isci; the server defaults to REGULAR when omitted. */
+  workerType?: WorkerType;
 }
 
 export interface CreateCustomerPayload {
@@ -203,9 +214,32 @@ export interface CreateCustomerPayload {
 }
 
 export interface StockMovementPayload {
+  waterType: WaterType;
   bottleCount: number;
   note?: string;
   idempotencyKey?: string;
+  /** Only /return and /distribute name another worker. */
+  workerId?: string;
+}
+
+export interface CreateDepositPayload {
+  idempotencyKey?: string;
+  customerId: string;
+  type: 'DEPOSIT_IN' | 'DEPOSIT_OUT' | 'ADJUSTMENT';
+  /** Positive for IN/OUT; signed for ADJUSTMENT. */
+  amount: string | number;
+  bottleCount: number;
+  note?: string;
+  occurredAt?: string;
+}
+
+export interface CreateExpensePayload {
+  idempotencyKey?: string;
+  category: ExpenseCategory;
+  waterType?: WaterType;
+  amount: string;
+  note?: string;
+  spentAt?: string;
 }
 
 export interface CreateAdjustmentPayload {
@@ -287,12 +321,31 @@ export interface ApiSurface {
   adjustmentsCreate: { POST: [DebtAdjustmentType] };
 
   inventorySummary: { GET: [InventorySummary] };
-  myStock: { GET: [{ quantity: number; updatedAt: string | null }] };
+  myStock: { GET: [MyStock] };
   inventoryTransactions: { GET: [Paginated<InventoryTransaction>] };
   stockIn: { POST: [{ transactionId: string; duplicate: boolean; newBalance: number }] };
   issue: { POST: [{ transactionId: string; duplicate: boolean; newBalance: number }] };
   returnStock: { POST: [{ transactionId: string; duplicate: boolean; newBalance: number }] };
   writeOff: { POST: [{ transactionId: string; duplicate: boolean; newBalance: number }] };
+  distribute: { POST: [{ transactionId: string; duplicate: boolean; newBalance: number }] };
+
+  prices: { GET: [WaterPrice[]] };
+  priceHistory: { GET: [Paginated<PriceHistoryEntry>] };
+  priceSet: { PUT: [{ changed: boolean; waterType: WaterType; price: number; oldPrice: number }] };
+  priceRequests: { GET: [Paginated<PriceChangeRequest>] };
+  priceRequestCreate: { POST: [PriceChangeRequest] };
+  priceRequestReview: {
+    PATCH: [{ request: PriceChangeRequest; historyId: string | null; price: number | null }];
+  };
+
+  deposits: {
+    GET: [Paginated<CustomerDeposit> & { totals: { amount: number; bottleCount: number } }];
+  };
+  depositSummary: { GET: [{ balance: number; bottleBalance: number; movements: number; lastMovementAt: string | null }] };
+  depositCreate: { POST: [{ deposit: CustomerDeposit; duplicate: boolean; balance: number; bottleBalance: number }] };
+  expenses: { GET: [Paginated<Expense> & { totalAmount: number }] };
+  expenseCreate: { POST: [{ expense: Expense; duplicate: boolean }] };
+  expenseVoid: { POST: [Expense] };
 
   reports: { GET: [Report] };
   auditLogs: { GET: [Paginated<AuditLogEntry>] };

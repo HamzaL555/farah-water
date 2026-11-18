@@ -59,7 +59,11 @@ export const WarehouseScreen: React.FC = () => {
         <Text style={styles.subtitle}>İşçilər qeyd edir, siz baxırsınız</Text>
 
         <View style={styles.row}>
-          <StatCard label="Anbarda qalan" value={String(summary?.warehouseQuantity ?? 0)} icon="🏭" accent={colors.primary} />
+          <StatCard label="Anbarda Bulaq" value={String(summary?.warehouse.spring ?? 0)} icon="🏔️" accent={colors.info} background={colors.infoBg} />
+          <StatCard label="Anbarda Filtr" value={String(summary?.warehouse.filtered ?? 0)} icon="💧" accent={colors.success} background={colors.successBg} />
+        </View>
+        <View style={styles.row}>
+          <StatCard label="Anbarda cəmi" value={String(summary?.warehouse.total ?? 0)} icon="🏭" accent={colors.primary} />
           <StatCard
             label="İşçilərdə"
             value={String(summary?.inWorkersHands ?? 0)}
@@ -120,12 +124,17 @@ export const WarehouseScreen: React.FC = () => {
                 <View style={styles.flex}>
                   <Text style={styles.workerName}>{w.workerName}</Text>
                   <Text style={styles.workerMeta}>
-                    {w.username}
+                    {w.workerType === 'WAREHOUSE_KEEPER' ? 'Anbardar' : 'Adi işçi'}
                     {w.isActive ? '' : ' · deaktiv'}
                   </Text>
                 </View>
-                <View style={[styles.qtyBadge, w.quantity === 0 && { backgroundColor: colors.dangerBg }]}>
-                  <Text style={[styles.qtyText, w.quantity === 0 && { color: colors.danger }]}>{w.quantity}</Text>
+                <View style={styles.qtyCol}>
+                  <Text style={[styles.qtyText, w.springQty === 0 && styles.qtyZero]}>{w.springQty}</Text>
+                  <Text style={styles.qtyLabel}>Bulaq</Text>
+                </View>
+                <View style={styles.qtyCol}>
+                  <Text style={[styles.qtyText, w.filteredQty === 0 && styles.qtyZero]}>{w.filteredQty}</Text>
+                  <Text style={styles.qtyLabel}>Filtr</Text>
                 </View>
               </View>
             ))
@@ -194,8 +203,10 @@ const styles = StyleSheet.create({
   },
   workerName: { fontSize: 14, fontWeight: '600', color: colors.text },
   workerMeta: { fontSize: 11, color: colors.textMuted },
-  qtyBadge: { backgroundColor: colors.infoBg, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 4 },
+  qtyCol: { alignItems: 'center', minWidth: 48 },
   qtyText: { fontSize: 14, fontWeight: '700', color: colors.info },
+  qtyZero: { color: colors.danger },
+  qtyLabel: { fontSize: 9, color: colors.textMuted },
   txRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
   txBadge: { minWidth: 44, paddingVertical: 4, paddingHorizontal: 6, borderRadius: radius.sm, alignItems: 'center' },
   txBadgeText: { fontSize: 13, fontWeight: '700' },

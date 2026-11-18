@@ -18,6 +18,7 @@ export type WorkerStackParamList = {
   /** Customer profile, reachable from both the customer list and debt rows. */
   CustomerDetail: { customerId: string };
   PaymentHistory: { deliveryId: string };
+  Prices: undefined;
   ChangePassword: undefined;
   PendingOperations: undefined;
 };
@@ -44,6 +45,9 @@ export type AdminStackParamList = {
   WorkerDetail: { workerId: string; workerName: string };
   WorkerForm: { workerId?: string } | undefined;
   CustomerDetail: { customerId: string };
+  Prices: undefined;
+  Expenses: undefined;
+  Deposits: undefined;
   Settings: undefined;
   ChangePassword: undefined;
   PendingOperations: undefined;

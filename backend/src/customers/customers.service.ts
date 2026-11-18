@@ -2,8 +2,9 @@ import { DeliveryStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../prisma';
 import { badRequest, notFound } from '../common/utils/errors';
 import { audit } from '../common/utils/audit';
-import { paginate, serializeCustomer, serializeDelivery } from '../common/utils/serialize';
+import { paginate, serializeCustomer, serializeDelivery, serializeDeposit } from '../common/utils/serialize';
 import { resolveRange, DateRangePreset } from '../common/utils/date';
+import { depositBalancesFor, getCustomerDepositSummary } from '../deposits/deposits.service';
 import { Actor } from '../users/users.service';
 
 export interface CreateCustomerInput {
@@ -106,17 +107,24 @@ export async function listCustomers(
 
   const debtMap = new Map(groups.map((g) => [g.customerId, g]));
   const bottleMap = new Map(bottles.map((g) => [g.customerId, g]));
+  // Deposit balances are admin-only money, and only for the page in view.
+  const depositMap = actor.role === Role.ADMIN ? await depositBalancesFor(ids) : new Map();
 
   let items = rows.map((r) => {
     const g = debtMap.get(r.id);
     const b = bottleMap.get(r.id);
-    return serializeCustomer({
-      ...r,
-      _count: { deliveries: g?._count._all ?? 0 },
-      totalDebt: g?._sum.debtAmount ?? new Prisma.Decimal(0),
-      totalDelivered: g?._sum.totalAmount ?? new Prisma.Decimal(0),
-      totalBottles: b?._sum.bottleCount ?? 0,
-    });
+    const dep = depositMap.get(r.id);
+    return {
+      ...serializeCustomer({
+        ...r,
+        _count: { deliveries: g?._count._all ?? 0 },
+        totalDebt: g?._sum.debtAmount ?? new Prisma.Decimal(0),
+        totalDelivered: g?._sum.totalAmount ?? new Prisma.Decimal(0),
+        totalBottles: b?._sum.bottleCount ?? 0,
+      }),
+      depositBalance: dep?.balance ?? 0,
+      depositBottleBalance: dep?.bottleBalance ?? 0,
+    };
   });
 
   if (query.onlyDebtors) items = items.filter((i) => i.totalDebt > 0);
@@ -150,7 +158,7 @@ export async function getCustomerDetail(id: string, actor: Actor) {
     }),
   ]);
 
-  return {
+  const base = {
     ...serializeCustomer({
       ...customer,
       _count: { deliveries: agg._count._all },
@@ -161,6 +169,28 @@ export async function getCustomerDetail(id: string, actor: Actor) {
     deliveryCount: agg._count._all,
     totalPaid: Number((agg._sum.paidAmount ?? new Prisma.Decimal(0)).toFixed(2)),
     deliveries: deliveries.map(serializeDelivery),
+  };
+
+  // Deposit money and the deposit ledger are shown to the admin only. A worker
+  // still sees the customer's phone/address for the delivery, nothing more.
+  if (actor.role !== Role.ADMIN) return base;
+
+  const [depositSummary, depositRows] = await Promise.all([
+    getCustomerDepositSummary(id),
+    prisma.customerDeposit.findMany({
+      where: { customerId: id },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      take: 100,
+      include: { createdBy: { select: { id: true, fullName: true } } },
+    }),
+  ]);
+
+  return {
+    ...base,
+    depositBalance: depositSummary.balance,
+    depositBottleBalance: depositSummary.bottleBalance,
+    depositMovements: depositSummary.movements,
+    deposits: depositRows.map((r) => serializeDeposit(r as never)),
   };
 }
 
