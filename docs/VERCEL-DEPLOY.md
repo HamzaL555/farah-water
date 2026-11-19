@@ -117,20 +117,50 @@ müştərilərlə kommersiya sistemidir. Deploy etməzdən əvvəl:
 
 Bu sənəd hazırlanarkən **heç bir plan dəyişdirilməyib və deploy edilməyib**.
 
-## Keçid pəncərəsi (köhnə build ↔ yeni baza)
+## Keçid pəncərəsi (köhnə build ↔ yeni baza) — KRİTİK
 
-Baza yeni sxemə keçdiyi üçün deploy anında köhnə build bir müddət işləyəcək:
+> **19.11.2026-da aşkar edilib:** keçid pəncərəsi **sıfır olmalıdır**. Köhnə
+> build yalnız oxuma əməliyyatlarında işləyir; **stoku dəyişən** hər əməliyyat
+> uğursuz olur (aşağıya bax).
 
-- Köhnə build çatdırılma yaradarkən **stoku dərhal çıxır** və `confirmedAt`
-  yazmır.
-- Yeni build həmin sətri "təsdiq gözləyir" kimi göstərəcək.
-- Yeni build təsdiq edərkən əvvəlcə **`OUT_DELIVERY` ledger qeydinə baxır**:
-  stok artıq çıxıbsa, ikinci dəfə çıxmır. Ləğv edərkən də ledger-ə baxıb
-  stoku bir dəfə qaytarır.
+Səbəb: `20261102140000_warehouse_water_type` miqrasiyası balans açarlarını
+dəyişdi:
 
-Yəni keçid pəncərəsində yaranan sətirlər nə ikiqat çıxılır, nə də ikiqat
-qaytarılır. Bu davranış `tests/integration/delivery-confirmation.test.ts`
-daxilində iki ayrı testlə təsdiqlənib.
+```
+WAREHOUSE      -> WAREHOUSE:FILTERED
+WORKER:<id>    -> WORKER:<id>:FILTERED
+```
+
+2 noyabr build-i hələ də `WAREHOUSE` və `WORKER:<id>` açarları ilə işləyir. Yeni
+bazada belə sətir yoxdur, ona görə:
+
+| Əməliyyat (köhnə build) | Nəticə |
+|---|---|
+| Çatdırılma yaratma (`OUT_DELIVERY`) | `409` — *"Kifayət qədər bidon yoxdur: işçinin əlində 0 ədəd var"* |
+| Anbardan paylama | `409` — anbar `0` görünür |
+| Stok qəbulu | keçir, amma `WAREHOUSE` sətrinə yazır (yeni build onu görmür) |
+| Siyahılar, hesabatlar, ödənişlər | işləyir |
+
+Yəni **miqrasiyadan sonra köhnə backend ilə gündəlik iş mümkün deyil**.
+Düzgün ardıcıllıq:
+
+1. **Əvvəlcə yeni backend-i deploy edin** (`vercel deploy --prebuilt --prod`),
+2. **sonra** `prisma migrate deploy` işlədin — və ya miqrasiyanı deploy ilə eyni
+   pəncərədə edin.
+
+Əgər miqrasiya artıq tətbiq olunubsa və deploy gecikirirsə, iki seçim var:
+
+- **A)** dərhal yeni backend-i deploy etmək (tövsiyə olunur), və ya
+- **B)** bazanı miqrasiyadan əvvəlki backup-dan bərpa etmək
+  ([`PROD-MIGRATION-2026-11-19.md`](./PROD-MIGRATION-2026-11-19.md) bölmə 8),
+  köhnə sistemi işlək vəziyyətə qaytarmaq və deploy zamanı miqrasiyanı yenidən
+  tətbiq etmək.
+
+Köhnə build-in yaratdığı sətirlər üçün ayrıca qoruma var: yeni build təsdiq
+edərkən əvvəlcə **`OUT_DELIVERY` ledger qeydinə baxır**, ləğv edərkən də stoku
+bir dəfə qaytarır. Bu davranış `tests/integration/delivery-confirmation.test.ts`
+daxilində iki ayrı testlə təsdiqlənib — lakin bu, yuxarıdakı açar uyğunsuzluğunu
+kompensasiya etmir.
 
 ## Deploy-dan sonrakı smoke test
 
