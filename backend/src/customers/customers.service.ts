@@ -87,6 +87,8 @@ export async function listCustomers(
   const scoped: Prisma.DeliveryWhereInput = {
     customerId: { in: ids },
     status: { not: DeliveryStatus.CANCELLED },
+    // Pending deliveries are not yet real revenue/debt.
+    confirmedAt: { not: null },
     ...(actor.role === Role.ADMIN ? {} : { workerId: actor.id }),
     ...(start || end ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
   };
@@ -144,7 +146,9 @@ export async function getCustomerDetail(id: string, actor: Actor) {
 
   const [agg, deliveries] = await Promise.all([
     prisma.delivery.aggregate({
-      where: deliveryWhere,
+      // Totals count only confirmed deliveries; the list below still shows
+      // pending ones so the owner can see what is waiting for confirmation.
+      where: { ...deliveryWhere, confirmedAt: { not: null } },
       _sum: { totalAmount: true, paidAmount: true, debtAmount: true, bottleCount: true },
       _count: { _all: true },
     }),

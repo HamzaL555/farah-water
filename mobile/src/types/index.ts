@@ -119,6 +119,15 @@ export interface Delivery {
   status: DeliveryStatus;
   deliveredAt: string | null;
   note: string | null;
+  /**
+   * Iki mərhələli çatdırılma. `false` o deməkdir ki, sətir qeydə alınıb, amma
+   * hələ təsdiqlənməyib və bidonlar işçinin balansından ÇIXMAYIB.
+   */
+  isConfirmed: boolean;
+  confirmedAt: string | null;
+  confirmedById: string | null;
+  confirmedByName: string | null;
+  confirmationNote: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
   createdAt: string | null;

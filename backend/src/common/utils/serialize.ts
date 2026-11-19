@@ -112,6 +112,9 @@ type DeliveryRow = {
   status: string;
   deliveredAt: Date;
   note: string | null;
+  confirmedAt: Date | null;
+  confirmedById: string | null;
+  confirmationNote: string | null;
   cancelledAt: Date | null;
   cancelReason: string | null;
   createdAt: Date;
@@ -119,6 +122,7 @@ type DeliveryRow = {
   worker?: { id: string; fullName: string; username: string } | null;
   company?: { id: string; name: string } | null;
   office?: { id: string; name: string } | null;
+  confirmedBy?: { id: string; fullName: string } | null;
 };
 
 export function serializeDelivery(d: DeliveryRow) {
@@ -140,6 +144,11 @@ export function serializeDelivery(d: DeliveryRow) {
     status: d.status,
     deliveredAt: iso(d.deliveredAt),
     note: d.note,
+    confirmedAt: iso(d.confirmedAt),
+    confirmedById: d.confirmedById ?? null,
+    confirmedByName: d.confirmedBy?.fullName ?? null,
+    confirmationNote: d.confirmationNote ?? null,
+    isConfirmed: d.confirmedAt != null,
     cancelledAt: iso(d.cancelledAt),
     cancelReason: d.cancelReason,
     createdAt: iso(d.createdAt),

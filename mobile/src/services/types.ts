@@ -166,6 +166,8 @@ export interface ListDeliveriesParams {
   from?: string;
   to?: string;
   onlyDebts?: boolean;
+  /** 'PENDING' = təsdiq gözləyir, 'CONFIRMED' = stok artıq çıxıb. */
+  confirmation?: 'PENDING' | 'CONFIRMED';
   page?: number;
   pageSize?: number;
   sortBy?: 'deliveredAt' | 'totalAmount' | 'debtAmount' | 'bottleCount';

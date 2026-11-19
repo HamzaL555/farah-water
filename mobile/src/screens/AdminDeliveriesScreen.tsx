@@ -21,8 +21,13 @@ const STATUS_FILTERS: Array<{ value: DeliveryStatus | 'ALL'; label: string }> = 
   { value: 'PAID', label: 'Ödənilib' },
 ];
 
-const PRESETS: Array<{ value: DateRangePreset; label: string }> = [
-  { value: 'today', label: 'Bu gün' },
+const CONFIRM_FILTERS: Array<{ value: 'ALL' | 'PENDING' | 'CONFIRMED'; label: string }> = [
+  { value: 'ALL', label: 'Bütün təsdiqlər' },
+  { value: 'PENDING', label: 'Təsdiq gözləyən' },
+  { value: 'CONFIRMED', label: 'Təsdiqlənmiş' },
+];
+
+const PRESETS: Array<{ value: DateRangePreset; label: string }> = [  { value: 'today', label: 'Bu gün' },
   { value: 'yesterday', label: 'Dünən' },
   { value: 'last7days', label: 'Son 7 gün' },
   { value: 'thisMonth', label: 'Bu ay' },
@@ -35,6 +40,7 @@ export const AdminDeliveriesScreen: React.FC = () => {
   const navigation = useNavigation<Nav>();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<DeliveryStatus | 'ALL'>('ALL');
+  const [confirmation, setConfirmation] = useState<'ALL' | 'PENDING' | 'CONFIRMED'>('ALL');
   const [preset, setPreset] = useState<DateRangePreset>('today');
   const [workerId, setWorkerId] = useState<string | undefined>();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -48,6 +54,7 @@ export const AdminDeliveriesScreen: React.FC = () => {
         .list({
           search: query || undefined,
           status: status === 'ALL' ? undefined : status,
+          confirmation: confirmation === 'ALL' ? undefined : confirmation,
           preset,
           workerId,
           page,
@@ -56,7 +63,7 @@ export const AdminDeliveriesScreen: React.FC = () => {
           sortDir: 'desc',
         })
         .then((r) => r.data),
-    [query, status, preset, workerId, page],
+    [query, status, confirmation, preset, workerId, page],
   );
 
   useFocusEffect(
@@ -147,6 +154,23 @@ export const AdminDeliveriesScreen: React.FC = () => {
             setPage(1);
           }}
         />
+
+        <View style={styles.chipRow}>
+          {CONFIRM_FILTERS.map((item) => (
+            <Chip
+              key={item.value}
+              compact
+              selected={confirmation === item.value}
+              onPress={() => {
+                setConfirmation(item.value);
+                setPage(1);
+              }}
+              style={styles.chip}
+            >
+              {item.label}
+            </Chip>
+          ))}
+        </View>
 
         {workerId ? (
           <View style={styles.activeFilterRow}>

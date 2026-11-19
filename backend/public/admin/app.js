@@ -593,6 +593,23 @@
     return '<span class="badge ' + st.cls + '">' + esc(st.label) + '</span>';
   }
 
+  /**
+   * The second, separate state of a delivery.
+   *
+   * A recorded delivery is not yet a completed one: the bottles stay in the
+   * worker's hands until somebody presses "Təsdiqlə". Showing that state as a
+   * badge everywhere keeps a pending row from being mistaken for a delivered
+   * one in a list.
+   */
+  function confirmBadge(d) {
+    if (d.status === 'CANCELLED') {
+      return '<span class="badge badge-muted">ləğv edilib</span>';
+    }
+    return d.isConfirmed
+      ? '<span class="badge badge-paid">Təsdiqləndi</span>'
+      : '<span class="badge badge-warn">Gözləyir</span>';
+  }
+
   /** Bulaq and Filtr are visually distinct everywhere, never one grey label. */
   function waterBadge(w) {
     var label = WATER_FULL[w] || w || '—';
@@ -1892,8 +1909,10 @@
     var url = '/deliveries?pageSize=50';
     var s = $('#del-s') ? $('#del-s').value : '';
     var st = $('#del-status') ? $('#del-status').value : '';
+    var cf = $('#del-confirm') ? $('#del-confirm').value : '';
     if (s) url += '&search=' + encodeURIComponent(s);
     if (st) url += '&status=' + st;
+    if (cf) url += '&confirmation=' + cf;
     if ($('#del-debt') && $('#del-debt').checked) url += '&onlyDebts=true';
 
     var data = await api('GET', url);
@@ -1909,6 +1928,7 @@
         money(d.totalAmount),
         money(d.paidAmount),
         money(d.debtAmount),
+        confirmBadge(d),
         statusBadge(d.status),
         '<button class="btn btn-outline btn-sm" data-id="' + d.id + '">Aç</button>',
       ];
@@ -1917,6 +1937,11 @@
     view.innerHTML =
       '<div class="toolbar">' +
         '<input id="del-s" class="grow" placeholder="Müştəri, ünvan və ya ofis" value="' + esc(s) + '" />' +
+        '<select id="del-confirm">' +
+          '<option value="">Bütün çatdırılmalar</option>' +
+          '<option value="PENDING"' + (cf === 'PENDING' ? ' selected' : '') + '>Təsdiq gözləyən</option>' +
+          '<option value="CONFIRMED"' + (cf === 'CONFIRMED' ? ' selected' : '') + '>Təsdiqlənmiş</option>' +
+        '</select>' +
         '<select id="del-status"><option value="">Bütün statuslar</option>' +
           '<option value="UNPAID"' + (st === 'UNPAID' ? ' selected' : '') + '>Borc</option>' +
           '<option value="PARTIAL"' + (st === 'PARTIAL' ? ' selected' : '') + '>Qismən ödənilib</option>' +
@@ -1933,17 +1958,57 @@
           { label: 'Tarix' }, { label: 'Su' }, { label: 'Hara' }, { label: 'Müştəri' }, { label: 'İşçi' },
           { label: 'Bidon', num: true }, { label: 'Ümumi', num: true },
           { label: 'Ödənilən', num: true }, { label: 'Borc', num: true },
-          { label: 'Status' }, { label: '', cls: 'actions' },
+          { label: 'Təsdiq' }, { label: 'Status' }, { label: '', cls: 'actions' },
         ], rows, 'Çatdırılma yoxdur.'), true);
 
     $('#del-go').addEventListener('click', function () { navigate('deliveries'); });
     $('#del-s').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') navigate('deliveries');
     });
+    $('#del-confirm').addEventListener('change', function () { navigate('deliveries'); });
     $$('#view button[data-id]').forEach(function (b) {
       b.addEventListener('click', function () { openDelivery(b.dataset.id); });
     });
     $('#add-del').addEventListener('click', function () { openDelivery(null); });
+  }
+
+  /**
+   * A separate confirmation action: this is the only step that moves bottles
+   * out of the worker's balance. Recording a drop and confirming it are two
+   * deliberate clicks, so a mistyped row can be cancelled before it ever
+   * touches stock.
+   */
+  function confirmDelivery(id, btn) {
+    return api('POST', '/deliveries/' + id + '/confirm', {})
+      .then(function () {
+        toast('Çatdırılma təsdiqləndi, bidonlar işçinin balansından çıxdı.', 'ok');
+        closeModal();
+        openDelivery(id);
+      });
+  }
+
+  /** Admin-only cancellation, with the reason the ledger requires. */
+  function cancelDeliveryForm(d) {
+    openModal('Çatdırılmanı ləğv et',
+      '<div class="alert alert-info">' +
+        (d.isConfirmed
+          ? 'Bu çatdırılma təsdiqlənib. Ləğv edilərsə bidonlar işçinin balansına qaytarılacaq.'
+          : 'Bu çatdırılma hələ təsdiqlənməyib. Ləğv heç bir stok hərəkəti yaratmayacaq.') +
+      '</div>' +
+      textField('c-reason', 'Ləğv səbəbi', '', {}),
+      [
+        { label: 'İmtina', kind: 'outline' },
+        { label: 'Ləğv et', kind: 'danger', onClick: function () {
+          var reason = $('#c-reason').value.trim();
+          if (reason.length < 3) throw new Error('Ləğv səbəbi yazılmalıdır (ən azı 3 hərf).');
+          return api('POST', '/deliveries/' + d.id + '/cancel', { reason: reason })
+            .then(function () {
+              closeModal();
+              toast('Çatdırılma ləğv edildi.', 'ok');
+              navigate('deliveries');
+            });
+        } },
+      ]);
   }
 
   async function openDelivery(id) {
@@ -1965,6 +2030,18 @@
     // it in. Saying so plainly beats showing a confident "0.00 AZN".
     var priceMissing = Number(d.unitPrice) === 0;
 
+    // Only the owning worker or an admin may confirm; only an admin cancels.
+    var mine = state.user && state.user.id === d.workerId;
+    var canConfirm = d.status !== 'CANCELLED' && !d.isConfirmed && (isAdmin() || mine);
+
+    var confirmLine = d.status === 'CANCELLED'
+      ? '<span class="badge badge-muted">ləğv edilib</span>'
+      : d.isConfirmed
+        ? '<span class="badge badge-paid">Təsdiqləndi</span>' +
+          (d.confirmedAt ? ' · ' + dateTime(d.confirmedAt) : '') +
+          (d.confirmedByName ? ' · ' + esc(d.confirmedByName) : '')
+        : '<span class="badge badge-warn">Gözləyir</span> · stok hələ çıxmayıb';
+
     openModal('Çatdırılma · ' + date(d.deliveredAt),
       '<dl class="kv">' +
         '<dt>Müştəri</dt><dd>' + esc(d.customerName || '—') + '</dd>' +
@@ -1977,10 +2054,18 @@
         '<dt>Ümumi</dt><dd>' + money(d.totalAmount) + ' AZN</dd>' +
         '<dt>Ödənilən</dt><dd>' + money(d.paidAmount) + ' AZN</dd>' +
         '<dt>Qalıq borc</dt><dd>' + money(d.debtAmount) + ' AZN</dd>' +
+        '<dt>Təsdiq</dt><dd>' + confirmLine + '</dd>' +
+        (d.confirmationNote ? '<dt>Təsdiq qeydi</dt><dd>' + esc(d.confirmationNote) + '</dd>' : '') +
         '<dt>Status</dt><dd>' + statusBadge(d.status) + '</dd>' +
         (d.note ? '<dt>Qeyd</dt><dd>' + esc(d.note) + '</dd>' : '') +
       '</dl>' +
-      (isAdmin() && d.status !== 'CANCELLED'
+      (canConfirm
+        ? '<div class="alert alert-info">Çatdırılma hələ təsdiqlənməyib. Bidonlar yalnız <strong>Təsdiqlə</strong> düyməsindən sonra işçinin balansından çıxır.</div>'
+        : '') +
+      (isAdmin() && d.status !== 'CANCELLED' && !d.isConfirmed
+        ? '<div class="alert alert-info">Qiymət və ödəniş təsdiqdən sonra yazılır.</div>'
+        : '') +
+      (isAdmin() && d.status !== 'CANCELLED' && d.isConfirmed
         ? '<div class="alert alert-info">Qiyməti və alınan pulu siz yazırsınız. Borc avtomatik hesablanır.</div>'
         : '') +
       '<div class="mt">' + table([
@@ -1988,11 +2073,19 @@
       ], rows, 'Ödəniş yoxdur.') + '</div>',
       [
         { label: 'Bağla', kind: 'outline' },
+        ...(canConfirm
+          ? [{ label: 'Təsdiqlə', kind: 'primary', onClick: function () { return confirmDelivery(d.id); } }]
+          : []),
         ...(isAdmin() && d.status !== 'CANCELLED'
           ? [
               { label: 'Faktura', kind: 'outline', onClick: function () { closeModal(); invoice(d); } },
-              { label: 'Qiymət / ödəniş', kind: 'primary', onClick: function () { closeModal(); deliveryPriceForm(d); } },
             ]
+          : []),
+        ...(isAdmin() && d.status !== 'CANCELLED'
+          ? [{ label: 'Ləğv et', kind: 'outline', onClick: function () { closeModal(); cancelDeliveryForm(d); } }]
+          : []),
+        ...(isAdmin() && d.status !== 'CANCELLED' && d.isConfirmed
+          ? [{ label: 'Qiymət / ödəniş', kind: 'primary', onClick: function () { closeModal(); deliveryPriceForm(d); } }]
           : []),
       ]);
 
@@ -2213,10 +2306,13 @@ function newDeliveryForm() {
             bottleCount: count,
             deliveredAt: deliveredAt,
             idempotencyKey: idem('d'),
-          }).then(function () {
+          }).then(function (created) {
             closeModal();
-            toast('Çatdırılma qeydə alındı.', 'ok');
-            navigate('deliveries');
+            toast('Çatdırılma qeydə alındı. Bidonlar hələ stokdan çıxmayıb.', 'ok');
+            // Land on the row itself so the confirmation is one deliberate
+            // tap away, instead of buried in the list after a save.
+            if (created && created.id) openDelivery(created.id);
+            else navigate('deliveries');
           });
         } },
       ]);

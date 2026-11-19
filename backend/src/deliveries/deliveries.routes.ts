@@ -7,11 +7,19 @@ import { actorOf, param } from '../common/utils/actor';
 import {
   uuidParam,
   cancelDeliverySchema,
+  confirmDeliverySchema,
   createDeliverySchema,
   listDeliveriesSchema,
   updateDeliverySchema,
 } from '../common/schemas';
-import { cancelDelivery, createDelivery, getDeliveryDetail, listDeliveries, updateDelivery } from './delivery.service';
+import {
+  cancelDelivery,
+  confirmDelivery,
+  createDelivery,
+  getDeliveryDetail,
+  listDeliveries,
+  updateDelivery,
+} from './delivery.service';
 
 export const deliveriesRouter = Router();
 deliveriesRouter.use(requireAuth);
@@ -51,6 +59,22 @@ deliveriesRouter.patch(
   validate(updateDeliverySchema),
   asyncHandler(async (req, res) => {
     res.json({ data: await updateDelivery(param(req, 'id'), req.body, actorOf(req), req as never) });
+  }),
+);
+
+// Ayrica tesdiq: stok yalniz bu addimdan sonra balansdan cixir. Admin ve ya
+// catdirilmanin oz iscisi cagira biler; tekrar cagiris ikinci defe stok
+// cixmir (idempotent).
+deliveriesRouter.post(
+  '/:id/confirm',
+  validate(uuidParam, 'params'),
+  validate(confirmDeliverySchema),
+  asyncHandler(async (req, res) => {
+    const result = await confirmDelivery(param(req, 'id'), actorOf(req), req.body, req as never);
+    res.status(200).json({
+      data: result.delivery,
+      meta: { duplicate: result.duplicate },
+    });
   }),
 );
 

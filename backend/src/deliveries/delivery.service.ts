@@ -21,6 +21,15 @@ import { newIdempotencyKey } from '../auth/tokens';
 
 type PrismaClientLike = Prisma.TransactionClient | typeof prisma;
 
+/** The relation set every deliveries response needs (list, detail, confirm). */
+const DELIVERY_RELATIONS = {
+  customer: { select: { id: true, name: true, phone: true, address: true } },
+  worker: { select: { id: true, fullName: true, username: true } },
+  company: { select: { id: true, name: true } },
+  office: { select: { id: true, name: true } },
+  confirmedBy: { select: { id: true, fullName: true } },
+} satisfies Prisma.DeliveryInclude;
+
 export interface Actor {
   id: string;
   role: Role;
@@ -184,14 +193,9 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
     if (existing) {
       const full = await tx.delivery.findUniqueOrThrow({
         where: { id: existing.id },
-        include: {
-          customer: { select: { id: true, name: true, phone: true, address: true } },
-          worker: { select: { id: true, fullName: true, username: true } },
-          company: { select: { id: true, name: true } },
-          office: { select: { id: true, name: true } },
-        },
+        include: DELIVERY_RELATIONS,
       });
-      return { delivery: serializeDelivery(full as never), duplicate: true, stockAfter: null as number | null };
+      return { delivery: serializeDelivery(full as never), duplicate: true };
     }
 
     // ---- resolve customer -------------------------------------------------
@@ -234,7 +238,10 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
       if (!exists) throw notFound('Müştəri tapılmadı.');
     }
 
-    // ---- create the delivery ---------------------------------------------
+    // ---- create the delivery (stock is NOT moved yet) ---------------------
+    // A delivery is recorded first and confirmed separately. The bottles stay
+    // in the worker's hands until an explicit confirmation, so a mistyped row
+    // can be cancelled without ever touching the balance.
     const createdDelivery = await tx.delivery.create({
       data: {
         idempotencyKey: input.idempotencyKey,
@@ -260,40 +267,15 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
       },
     });
 
-    // ---- move the bottles out of the worker's hands (atomic + idempotent) --
-    const stockResult = await applyInventoryTx(tx, {
-      reference: `delivery:${createdDelivery.id}`,
-      type: 'OUT_DELIVERY',
-      waterType: waterType,
-      bottleCount: input.bottleCount,
-      balanceKey: workerKey(workerId, waterType),
-      direction: -1,
-      workerId,
-      deliveryId: createdDelivery.id,
-      note: `Çatdırılma #${createdDelivery.id.slice(0, 8)}`,
-      occurredAt: deliveredAt,
-      createdById: actor.id,
-    });
-
-    const updated = await recalcDelivery(tx, createdDelivery.id);
-
-    // recalcDelivery returns the bare row. A POST answer should carry the same
-    // shape as a GET: without the relations the caller gets back a delivery with
-    // no customer name and, for a company drop, no office name - the very two
-    // fields it just supplied.
+    // A POST answer should carry the same shape as a GET: without the
+    // relations the caller gets back a delivery with no customer name and, for
+    // a company drop, no office name - the very two fields it just supplied.
     const withRelations = await tx.delivery.findUniqueOrThrow({
-      where: { id: updated.id },
-      include: {
-        customer: { select: { id: true, name: true, phone: true, address: true } },
-        worker: { select: { id: true, fullName: true, username: true } },
-        company: { select: { id: true, name: true } },
-        office: { select: { id: true, name: true } },
-      },
+      where: { id: createdDelivery.id },
+      include: DELIVERY_RELATIONS,
     });
 
-    // Serialise inside the transaction so Decimal columns become plain JSON
-    // numbers before the row object leaves this scope.
-    return { delivery: serializeDelivery(withRelations as never), duplicate: false, stockAfter: stockResult.newBalance };
+    return { delivery: serializeDelivery(withRelations as never), duplicate: false };
   });
 
   if (!result.duplicate) {
@@ -312,23 +294,8 @@ export async function createDelivery(input: CreateDeliveryInput, actor: Actor) {
         destinationType,
         companyId,
         officeId,
+        pending: true,
       },
-    });
-
-    // The worker's hand stock just dropped by this delivery. Admins watch
-    // every balance movement, so they see the before and after here too.
-    await createNotification({
-      userId: actor.id,
-      actorId: actor.id,
-      actorName: actor.fullName,
-      actorRole: actor.role,
-      action: 'OUT_DELIVERY',
-      waterType,
-      bottleCount: input.bottleCount,
-      beforeBalance: (result.stockAfter ?? 0) + input.bottleCount,
-      afterBalance: result.stockAfter ?? 0,
-      note: `Çatdırılma #${(result.delivery as { id: string }).id.slice(0, 8)}`,
-      relatedId: (result.delivery as { id: string }).id,
     });
   }
 
@@ -348,6 +315,8 @@ export interface ListDeliveriesQuery {
   from?: string;
   to?: string;
   onlyDebts?: boolean;
+  /** 'PENDING' = not yet confirmed, 'CONFIRMED' = stock already moved. */
+  confirmation?: 'PENDING' | 'CONFIRMED';
   page?: number;
   pageSize?: number;
   sortBy?: 'deliveredAt' | 'totalAmount' | 'debtAmount' | 'bottleCount';
@@ -370,7 +339,9 @@ export async function listDeliveries(query: ListDeliveriesQuery, actor: Actor) {
     ...(query.destinationType ? { destinationType: query.destinationType } : {}),
     ...(query.companyId ? { companyId: query.companyId } : {}),
     ...(query.officeId ? { officeId: query.officeId } : {}),
-    ...(query.onlyDebts ? { debtAmount: { gt: 0 } } : {}),
+    ...(query.onlyDebts ? { debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } } : {}),
+    ...(query.confirmation === 'PENDING' ? { confirmedAt: null } : {}),
+    ...(query.confirmation === 'CONFIRMED' ? { confirmedAt: { not: null } } : {}),
     ...(start || end
       ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } }
       : {}),
@@ -398,12 +369,7 @@ export async function listDeliveries(query: ListDeliveriesQuery, actor: Actor) {
       orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: {
-        customer: { select: { id: true, name: true, phone: true, address: true } },
-        worker: { select: { id: true, fullName: true, username: true } },
-        company: { select: { id: true, name: true } },
-        office: { select: { id: true, name: true } },
-      },
+      include: DELIVERY_RELATIONS,
     }),
     prisma.delivery.count({ where }),
   ]);
@@ -415,10 +381,7 @@ export async function getDeliveryDetail(id: string, actor: Actor) {
   const delivery = await prisma.delivery.findUnique({
     where: { id },
     include: {
-      customer: { select: { id: true, name: true, phone: true, address: true } },
-      worker: { select: { id: true, fullName: true, username: true } },
-      company: { select: { id: true, name: true } },
-      office: { select: { id: true, name: true } },
+      ...DELIVERY_RELATIONS,
       payments: {
         orderBy: { paidAt: 'desc' },
         include: { recordedBy: { select: { id: true, fullName: true } } },
@@ -446,6 +409,124 @@ export async function getDeliveryDetail(id: string, actor: Actor) {
   };
 }
 
+export async function confirmDelivery(
+  id: string,
+  actor: Actor,
+  input: { note?: string } = {},
+  req?: never,
+) {
+  const before = await prisma.delivery.findUnique({ where: { id }, include: DELIVERY_RELATIONS });
+  if (!before) throw notFound('Çatdırılma tapılmadı.');
+
+  // The driver who owns the delivery may confirm it in the field; an admin may
+  // confirm on anyone's behalf. Nobody else can move another worker's stock.
+  if (actor.role !== Role.ADMIN && before.workerId !== actor.id) {
+    throw forbidden('Bu çatdırılmanı yalnız onun işçisi və ya administrator təsdiqləyə bilər.');
+  }
+  if (before.status === DeliveryStatus.CANCELLED) {
+    throw badRequest('Ləğv edilmiş çatdırılma təsdiqlənə bilməz.');
+  }
+  // Idempotent: a second click (or a retry of the same request) returns the
+  // already-confirmed delivery instead of deducting the bottles twice.
+  if (before.confirmedAt) {
+    return { delivery: serializeDelivery(before as never), duplicate: true };
+  }
+
+  const note = input.note?.trim() || null;
+  const stock = { before: 0, after: 0, moved: false };
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Atomic claim. Only one confirmation may pass from pending to confirmed;
+    // the inventory leg below is part of the SAME transaction, so if there is
+    // not enough stock the claim is rolled back and the row stays pending.
+    const claimed = await tx.delivery.updateMany({
+      where: { id, confirmedAt: null, status: { not: DeliveryStatus.CANCELLED } },
+      data: { confirmedAt: new Date(), confirmedById: actor.id, confirmationNote: note },
+    });
+
+    if (claimed.count === 0) {
+      const current = await tx.delivery.findUniqueOrThrow({ where: { id }, include: DELIVERY_RELATIONS });
+      if (current.confirmedAt) {
+        // A concurrent request won the race. Its stock movement is the only one.
+        return { delivery: serializeDelivery(current as never), duplicate: true };
+      }
+      throw badRequest('Çatdırılma təsdiqlənə bilməz.');
+    }
+
+    // Move the bottles out of the worker's hands exactly once.
+    //
+    // A row recorded by the pre-confirmation build already has its stock leg.
+    // The migration marks those rows confirmed, but a row created between the
+    // migration and the new build is still pending with its bottles already
+    // gone. Trusting the ledger here instead of the flag makes both paths safe:
+    // if an OUT_DELIVERY leg exists, confirming only marks the row and never
+    // deducts a second time.
+    const alreadyOut = await tx.inventoryTransaction.findFirst({
+      where: { deliveryId: id, type: 'OUT_DELIVERY' },
+      orderBy: { occurredAt: 'asc' },
+    });
+
+    if (alreadyOut) {
+      stock.before = alreadyOut.beforeBalance ?? 0;
+      stock.after = alreadyOut.afterBalance ?? 0;
+      stock.moved = false;
+    } else {
+      const applied = await applyInventoryTx(tx, {
+        reference: `delivery:confirm:${id}`,
+        type: 'OUT_DELIVERY',
+        waterType: before.waterType,
+        bottleCount: before.bottleCount,
+        balanceKey: workerKey(before.workerId, before.waterType),
+        direction: -1,
+        workerId: before.workerId,
+        deliveryId: id,
+        note: `Çatdırılma təsdiqləndi #${id.slice(0, 8)}`,
+        occurredAt: new Date(),
+        createdById: actor.id,
+      });
+      stock.before = applied.beforeBalance;
+      stock.after = applied.newBalance;
+      stock.moved = !applied.duplicate;
+    }
+
+    const row = await tx.delivery.findUniqueOrThrow({ where: { id }, include: DELIVERY_RELATIONS });
+    return { delivery: serializeDelivery(row as never), duplicate: false };
+  });
+
+  if (!result.duplicate) {
+    await audit({
+      actorId: actor.id,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      action: 'delivery.confirmed',
+      entityType: 'delivery',
+      entityId: id,
+      before: serializeDelivery(before as never),
+      after: result.delivery,
+      meta: { note, bottleCount: before.bottleCount, waterType: before.waterType },
+      req,
+    });
+
+    if (stock.moved) {
+      await createNotification({
+        userId: actor.id,
+        actorId: actor.id,
+        actorName: actor.fullName,
+        actorRole: actor.role,
+        action: 'OUT_DELIVERY',
+        waterType: before.waterType,
+        bottleCount: before.bottleCount,
+        beforeBalance: stock.before,
+        afterBalance: stock.after,
+        note: `Çatdırılma təsdiqləndi #${id.slice(0, 8)}`,
+        relatedId: id,
+      });
+    }
+  }
+
+  return result;
+}
+
 export async function cancelDelivery(id: string, reason: string, actor: Actor, req?: never) {
   if (actor.role !== Role.ADMIN) throw forbidden('Yalnız administrator çatdırılmanı ləğv edə bilər.');
 
@@ -471,20 +552,33 @@ export async function cancelDelivery(id: string, reason: string, actor: Actor, r
       );
     }
 
-    // Return the bottles to the worker's hands so the stock stays truthful.
-    const applied = await applyInventoryTx(tx, {
-      reference: `delivery:cancel:${delivery.id}`,
-      type: 'RETURN_TO_STOCK',
-      waterType: delivery.waterType,
-      bottleCount: delivery.bottleCount,
-      balanceKey: workerKey(delivery.workerId, delivery.waterType),
-      direction: 1,
-      workerId: delivery.workerId,
-      deliveryId: delivery.id,
-      note: `Çatdırılma ləğv edildi: ${reason}`,
-      createdById: actor.id,
+    // Only a delivery whose bottles actually left returns them. `confirmedAt`
+    // covers the normal flow; the ledger covers a legacy pending row (created
+    // by the pre-confirmation build) whose stock leg exists but whose flag is
+    // still null. Cancelling such a row must restore the bottles, otherwise
+    // they would be lost. A pending row with no ledger leg returns nothing.
+    const outLeg = await tx.inventoryTransaction.findFirst({
+      where: { deliveryId: delivery.id, type: 'OUT_DELIVERY' },
     });
-    stock.after = applied.newBalance;
+    const returnLeg = await tx.inventoryTransaction.findFirst({
+      where: { deliveryId: delivery.id, type: 'RETURN_TO_STOCK' },
+    });
+
+    if (delivery.confirmedAt || (outLeg && !returnLeg)) {
+      const applied = await applyInventoryTx(tx, {
+        reference: `delivery:cancel:${delivery.id}`,
+        type: 'RETURN_TO_STOCK',
+        waterType: delivery.waterType,
+        bottleCount: delivery.bottleCount,
+        balanceKey: workerKey(delivery.workerId, delivery.waterType),
+        direction: 1,
+        workerId: delivery.workerId,
+        deliveryId: delivery.id,
+        note: `Çatdırılma ləğv edildi: ${reason}`,
+        createdById: actor.id,
+      });
+      stock.after = applied.newBalance;
+    }
 
     const cancelled = await tx.delivery.update({
       where: { id },
@@ -554,6 +648,16 @@ export async function updateDelivery(
   if (!before) throw notFound('Çatdırılma tapılmadı.');
   if (before.status === DeliveryStatus.CANCELLED) throw badRequest('Ləğv edilmiş çatdırılma dəyişdirilə bilməz.');
 
+  const isConfirmed = before.confirmedAt != null;
+
+  // Money may not be attached to a delivery that the balance has not accepted
+  // yet: otherwise revenue would appear for a row whose stock never moved.
+  if (patch.paidAmount !== undefined && !isConfirmed) {
+    throw badRequest(
+      'Təsdiqlənməmiş çatdırılma üçün ödəniş düzəlişi edilə bilməz. Əvvəlcə çatdırılmanı təsdiqləyin.',
+    );
+  }
+
   // Filled inside the transaction when bottles actually move; read after commit.
   const stock = { after: null as number | null };
   const appliedDelta =
@@ -616,7 +720,7 @@ export async function updateDelivery(
       );
     }
 
-    if (bottleDelta > 0) {
+    if (bottleDelta > 0 && isConfirmed) {
       const applied = await applyInventoryTx(tx, {
         // A fresh reference per actual movement: a revisiting edit such as
         // 10 -> 12 -> 14 -> 12 -> 14 must still move bottles on the last step.
@@ -634,7 +738,7 @@ export async function updateDelivery(
         createdById: actor.id,
       });
       stock.after = applied.newBalance;
-    } else if (bottleDelta < 0) {
+    } else if (bottleDelta < 0 && isConfirmed) {
       const applied = await applyInventoryTx(tx, {
         reference: `delivery:adjust-down:${id}:${newIdempotencyKey()}`,
         type: 'RETURN_TO_STOCK',

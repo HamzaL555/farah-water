@@ -37,6 +37,11 @@ export async function createAdjustment(input: CreateAdjustmentInput, actor: Acto
   const delivery = await prisma.delivery.findUnique({ where: { id: input.deliveryId } });
   if (!delivery) throw notFound('Çatdırılma tapılmadı.');
   if (delivery.status === DeliveryStatus.CANCELLED) throw badRequest('Ləğv edilmiş çatdırılmaya düzəliş edilə bilməz.');
+  if (!delivery.confirmedAt) {
+    throw badRequest(
+      'Təsdiqlənməmiş çatdırılmaya borc düzəlişi edilə bilməz. Əvvəlcə çatdırılmanı təsdiqləyin.',
+    );
+  }
 
   // An adjustment may never push the delivery's debt below zero.
   if (input.type !== DebtAdjustmentType.INCREASE) {
@@ -119,6 +124,9 @@ export async function listDebts(query: ListDebtsQuery, actor: Actor) {
   const where: Prisma.DeliveryWhereInput = {
     debtAmount: { gt: 0 },
     status: { not: DeliveryStatus.CANCELLED },
+    // A pending delivery has not touched stock or revenue yet, so it cannot be
+    // presented as a real debt.
+    confirmedAt: { not: null },
     ...(effectiveWorkerId ? { workerId: effectiveWorkerId } : {}),
     ...(query.customerId ? { customerId: query.customerId } : {}),
     ...(query.status ? { status: query.status } : {}),
@@ -163,6 +171,9 @@ export async function debtSummaryByCustomer(query: ListDebtsQuery, actor: Actor)
   const where: Prisma.DeliveryWhereInput = {
     debtAmount: { gt: 0 },
     status: { not: DeliveryStatus.CANCELLED },
+    // A pending delivery has not touched stock or revenue yet, so it cannot be
+    // presented as a real debt.
+    confirmedAt: { not: null },
     ...(effectiveWorkerId ? { workerId: effectiveWorkerId } : {}),
     ...(start || end ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
     ...(query.search ? { customer: { name: { contains: query.search, mode: 'insensitive' } } } : {}),

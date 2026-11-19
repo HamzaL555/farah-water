@@ -97,6 +97,7 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
   const billedAgg = await prisma.delivery.aggregate({
     where: scopeWorker({
       status: { not: DeliveryStatus.CANCELLED },
+      confirmedAt: { not: null },
       ...(req.customerId ? { customerId: req.customerId } : {}),
       ...(start || end ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
     }),
@@ -152,6 +153,8 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
   if (req.type === 'daily' || req.type === 'period' || req.type === 'deliveries' || req.type === 'worker') {
     const deliveries = await prisma.delivery.findMany({
       where: scopeWorker({
+        // Financial report: only confirmed rows, so the totals match the bill.
+        confirmedAt: { not: null },
         ...(req.customerId ? { customerId: req.customerId } : {}),
         ...(start || end ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
       }),
@@ -242,6 +245,7 @@ export async function buildReport(req: ReportRequest, actor: Actor): Promise<Rep
       where: scopeWorker({
         debtAmount: { gt: 0 },
         status: { not: DeliveryStatus.CANCELLED },
+        confirmedAt: { not: null },
         ...(req.customerId ? { customerId: req.customerId } : {}),
         ...(start || end ? { deliveredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
       }),

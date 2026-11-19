@@ -85,6 +85,12 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
   const [cancelReason, setCancelReason] = useState('');
   const [snack, setSnack] = useState<string | null>(null);
 
+  // --------------------------- confirm dialog -------------------------------
+  // A delivery is recorded first, then confirmed separately. This dialog is
+  // the second, deliberate step: only here do the bottles leave the balance.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmNote, setConfirmNote] = useState('');
+
   // --------------------------- price dialog ---------------------------------
   // Admin-only. The worker set neither the price nor the cash collected, so
   // both arrive as 0 until the owner fills them in here.
@@ -143,6 +149,9 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
       .then((r) => r.data),
   );
   const cancelAction = useSubmit(async () => deliveriesApi.cancel(route.params.deliveryId, cancelReason.trim()).then((r) => r.data));
+  const confirmAction = useSubmit(async () =>
+    deliveriesApi.confirm(route.params.deliveryId, confirmNote.trim() || undefined).then((r) => r.data),
+  );
   const priceAction = useSubmit(async () =>
     deliveriesApi
       .update(route.params.deliveryId, {
@@ -223,6 +232,15 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
     void run(false);
   };
 
+  const onConfirm = async () => {
+    const result = await confirmAction.submit();
+    if (!result) return;
+    setConfirmOpen(false);
+    setConfirmNote('');
+    setSnack('Çatdırılma təsdiqləndi. Bidonlar işçinin balansından çıxdı.');
+    void run(false);
+  };
+
   if (loading && !data) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -249,6 +267,11 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
 
   const isCancelled = data.status === 'CANCELLED';
   const priceMissing = Number(data.unitPrice) === 0;
+  const isConfirmed = Boolean(data.isConfirmed);
+  const isOwner = user?.id === data.workerId;
+  // The owner worker may confirm their own drop in the field; an admin may
+  // confirm on anyone's behalf. Ownership is re-checked on the server.
+  const canConfirm = !isCancelled && !isConfirmed && (isAdmin || isOwner);
 
   const openPriceDialog = () => {
     setUnitPrice(String(data.unitPrice ?? '0'));
@@ -286,6 +309,21 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
             value={priceMissing ? 'qiymət yazılmayıb' : formatMoney(data.unitPrice)}
           />
           <KeyValueRow label="Qeyd" value={data.note ?? '-'} />
+          <KeyValueRow
+            label="Təsdiq"
+            value={
+              isCancelled
+                ? 'ləğv edilib'
+                : isConfirmed
+                  ? ['Təsdiqləndi', data.confirmedAt ? formatDateTime(data.confirmedAt) : null, data.confirmedByName]
+                      .filter(Boolean)
+                      .join(' · ')
+                  : 'gözləyir · stok hələ çıxmayıb'
+            }
+          />
+          {data.confirmationNote ? (
+            <KeyValueRow label="Təsdiq qeydi" value={data.confirmationNote} />
+          ) : null}
         </SectionCard>
 
         {/* İşçinin gördüyü şirkət çatdırılmasında ümumi məbləğ və borc gizlənir:
@@ -317,7 +355,24 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
         {/* Actions permitted for this role. */}
         {!isCancelled ? (
           <View style={styles.actions}>
-            {isAdmin ? (
+            {canConfirm ? (
+              <Button
+                mode="contained"
+                icon="check-decagram"
+                onPress={() => setConfirmOpen(true)}
+                style={styles.actionButton}
+              >
+                Təsdiqlə
+              </Button>
+            ) : null}
+
+            {!isConfirmed ? (
+              <Text style={styles.dialogHint}>
+                {isAdmin || isOwner
+                  ? 'Bidonlar yalnız təsdiqdən sonra işçinin balansından çıxır.'
+                  : 'Bu çatdırılma hələ təsdiqlənməyib.'}
+              </Text>
+            ) : isAdmin ? (
               <>
                 {data.debtAmount > 0 || priceMissing ? (
                   <Button mode="contained" icon="tag-plus" onPress={openPriceDialog} style={styles.actionButton}>
@@ -336,15 +391,24 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
                 <Button mode="outlined" icon="percent" onPress={() => setAdjustOpen(true)} style={styles.actionButton}>
                   Borc düzəlişi
                 </Button>
-                <Button mode="outlined" icon="close-circle" onPress={() => setCancelOpen(true)} style={styles.actionButton}>
-                  Ləğv et
-                </Button>
               </>
             ) : (
               <Text style={styles.dialogHint}>
                 Qiyməti və ödənilən pulu administrator yazır.
               </Text>
             )}
+
+            {isAdmin && !isConfirmed ? (
+              <Text style={styles.dialogHint}>
+                Qiymət və ödəniş çatdırılma təsdiqləndikdən sonra yazılır.
+              </Text>
+            ) : null}
+
+            {isAdmin ? (
+              <Button mode="outlined" icon="close-circle" onPress={() => setCancelOpen(true)} style={styles.actionButton}>
+                Ləğv et
+              </Button>
+            ) : null}
           </View>
         ) : null}
 
@@ -577,6 +641,34 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
             <Button onPress={() => setAdjustOpen(false)}>Bağla</Button>
             <Button onPress={onAdjust} loading={adjustAction.submitting}>
               Yadda saxla
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* --------------------------- confirm dialog --------------------------- */}
+      <Portal>
+        <Dialog visible={confirmOpen} onDismiss={() => setConfirmOpen(false)}>
+          <Dialog.Title>Çatdırılmanı təsdiqlə</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.dialogHint}>
+              Təsdiqdən sonra {data.bottleCount} bidon işçinin balansından çıxacaq. Təkrar təsdiq stoku
+              ikinci dəfə azaltmır.
+            </Text>
+            <PaperInput
+              label="Qeyd (istəyə bağlı)"
+              value={confirmNote}
+              onChangeText={setConfirmNote}
+              mode="outlined"
+              multiline
+              style={styles.dialogInput}
+            />
+            {confirmAction.error ? <HelperText type="error">{confirmAction.error}</HelperText> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setConfirmOpen(false)}>İmtina</Button>
+            <Button onPress={onConfirm} loading={confirmAction.submitting}>
+              Təsdiqlə
             </Button>
           </Dialog.Actions>
         </Dialog>

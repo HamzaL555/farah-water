@@ -27,7 +27,14 @@ export const DeliveryRow: React.FC<Props> = ({ delivery, onPress, showWorker = f
               {delivery.address}
             </Text>
           </View>
-          <StatusChip status={delivery.status} compact />
+          <View style={styles.chips}>
+            {delivery.status !== 'CANCELLED' && !delivery.isConfirmed ? (
+              <View style={styles.pendingChip}>
+                <Text style={styles.pendingText}>Təsdiq gözləyir</Text>
+              </View>
+            ) : null}
+            <StatusChip status={delivery.status} compact />
+          </View>
         </View>
 
         <View style={styles.metaRow}>
@@ -74,6 +81,14 @@ const styles = StyleSheet.create({
   card: { borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
   content: { gap: spacing.xs, paddingVertical: spacing.md },
   topRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  chips: { alignItems: 'flex-end', gap: 4 },
+  pendingChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.warningBg,
+  },
+  pendingText: { fontSize: 10, fontWeight: '600', color: colors.warning },
   left: { flex: 1, gap: 2 },
   customer: { fontSize: 15, fontWeight: '600', color: colors.text },
   address: { fontSize: 12, color: colors.textMuted },

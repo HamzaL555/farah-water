@@ -225,6 +225,17 @@ export const makeDelivery = async (workerToken: string, payload: DeliveryPayload
   if (res.statusCode !== 201) return res;
 
   const deliveryId = res.body.data.id as string;
+
+  // A delivery is recorded first and confirmed separately. The helper does the
+  // confirmation as the owning worker, which is the normal field flow: bottles
+  // leave the worker's balance only at this step. If there is not enough stock
+  // the confirmation fails and that failure is what the caller sees.
+  const confirm = await api
+    .post(`/api/v1/deliveries/${deliveryId}/confirm`)
+    .set(auth(workerToken))
+    .send({});
+  if (confirm.statusCode >= 400) return confirm;
+
   const patch = await api
     .patch(`/api/v1/deliveries/${deliveryId}`)
     .set(auth(fx.admin!.token))

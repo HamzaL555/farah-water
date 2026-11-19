@@ -25,7 +25,12 @@ export async function workerDashboard(actor: Actor) {
 
   const [todayDelAgg, todayPayAgg, openDebts, myDebt, stock, myDeliveries] = await Promise.all([
     prisma.delivery.aggregate({
-      where: { workerId: actor.id, deliveredAt: { gte: dayStart, lt: dayEnd }, status: { not: DeliveryStatus.CANCELLED } },
+      where: {
+        workerId: actor.id,
+        deliveredAt: { gte: dayStart, lt: dayEnd },
+        status: { not: DeliveryStatus.CANCELLED },
+        confirmedAt: { not: null },
+      },
       _sum: { bottleCount: true, totalAmount: true },
       _count: { _all: true },
     }),
@@ -35,10 +40,20 @@ export async function workerDashboard(actor: Actor) {
       _count: { _all: true },
     }),
     prisma.delivery.count({
-      where: { workerId: actor.id, debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED } },
+      where: {
+        workerId: actor.id,
+        debtAmount: { gt: 0 },
+        status: { not: DeliveryStatus.CANCELLED },
+        confirmedAt: { not: null },
+      },
     }),
     prisma.delivery.aggregate({
-      where: { workerId: actor.id, debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED } },
+      where: {
+        workerId: actor.id,
+        debtAmount: { gt: 0 },
+        status: { not: DeliveryStatus.CANCELLED },
+        confirmedAt: { not: null },
+      },
       _sum: { debtAmount: true },
     }),
     prisma.inventoryBalance.findMany({ where: { workerId: actor.id, scope: 'WORKER' }, select: { waterType: true, quantity: true } }),
@@ -120,7 +135,7 @@ export async function adminDashboard(query: RangeQuery) {
       _sum: { bottleCount: true },
     }),
     prisma.delivery.aggregate({
-      where: { deliveredAt: { gte: dayStart, lt: dayEnd }, status: { not: DeliveryStatus.CANCELLED } },
+      where: { deliveredAt: { gte: dayStart, lt: dayEnd }, status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } },
       _sum: { bottleCount: true },
     }),
     prisma.inventoryTransaction.aggregate({
@@ -132,20 +147,30 @@ export async function adminDashboard(query: RangeQuery) {
       _sum: { bottleCount: true },
     }),
     prisma.payment.aggregate({ where: { voidedAt: null, ...inRange('paidAt') }, _sum: { amount: true }, _count: { _all: true } }),
-    prisma.delivery.aggregate({ where: { status: { not: DeliveryStatus.CANCELLED }, ...inRange('deliveredAt') }, _sum: { totalAmount: true } }),
+    prisma.delivery.aggregate({
+      where: { status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null }, ...inRange('deliveredAt') },
+      _sum: { totalAmount: true },
+    }),
     prisma.payment.aggregate({ where: { voidedAt: null, paidAt: { gte: dayStart, lt: dayEnd } }, _sum: { amount: true }, _count: { _all: true } }),
     prisma.payment.aggregate({ where: { voidedAt: null, paidAt: { gte: monthStart, lt: monthEnd } }, _sum: { amount: true }, _count: { _all: true } }),
     prisma.delivery.aggregate({
-      where: { debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED } },
+      where: { debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } },
       _sum: { debtAmount: true },
     }),
     prisma.delivery.groupBy({
       by: ['customerId'],
-      where: { debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED } },
+      where: { debtAmount: { gt: 0 }, status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } },
     }),
-    prisma.delivery.count({ where: { deliveredAt: { gte: dayStart, lt: dayEnd }, status: { not: DeliveryStatus.CANCELLED } } }),
-    prisma.delivery.aggregate({ where: { status: { not: DeliveryStatus.CANCELLED } }, _sum: { bottleCount: true } }),
-    prisma.delivery.count({ where: { status: { not: DeliveryStatus.CANCELLED }, ...inRange('deliveredAt') } }),
+    prisma.delivery.count({
+      where: { deliveredAt: { gte: dayStart, lt: dayEnd }, status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } },
+    }),
+    prisma.delivery.aggregate({
+      where: { status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null } },
+      _sum: { bottleCount: true },
+    }),
+    prisma.delivery.count({
+      where: { status: { not: DeliveryStatus.CANCELLED }, confirmedAt: { not: null }, ...inRange('deliveredAt') },
+    }),
   ]);
 
   const [money, depositsHeld, pendingPriceRequests] = await Promise.all([

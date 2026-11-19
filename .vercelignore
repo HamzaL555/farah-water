@@ -1,0 +1,45 @@
+# Only the backend and the already-synced admin panel are deployed.
+# Everything else is source material, local tooling, or build output that must
+# never be uploaded (it slows the build and can leak local paths/artifacts).
+mobile/
+web/
+docs/
+backups/
+logs/
+release/
+tools/
+.devpanel/
+coverage/
+
+# Local secrets and one-off request bodies
+.env
+.env.*
+db_url*.txt
+login_body.json
+gitcreds
+gh_token.txt
+vtok.txt
+tok.txt
+adminpw.txt
+
+# Database dumps and archives
+*.dump
+*.sql.gz
+*.zip
+
+# Test sources are not needed at runtime
+backend/tests/
+backend/vitest.config.ts
+
+# Local build output
+backend/dist/
+backend/node_modules/
+node_modules/
+.vercel/
+
+# Native/IDE noise
+**/.cxx/
+**/.gradle/
+**/build/
+.DS_Store
+Thumbs.db

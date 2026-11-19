@@ -146,6 +146,9 @@ export const deliveriesApi = {
       reason: string;
     },
   ) => apiClient.patch<Delivery>(`/deliveries/${id}`, patch),
+  /** Ayrica tesdiq: yalniz bu addim stoku balansdan cixarir (idempotent). */
+  confirm: (id: string, note?: string) =>
+    apiClient.post<Delivery>(`/deliveries/${id}/confirm`, { note }),
   cancel: (id: string, reason: string) => apiClient.post<Delivery>(`/deliveries/${id}/cancel`, { reason }),
 };
 

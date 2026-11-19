@@ -62,6 +62,11 @@ export async function createPayment(input: CreatePaymentInput, actor: Actor, req
   if (delivery.status === DeliveryStatus.CANCELLED) {
     throw badRequest('Ləğv edilmiş çatdırılma üçün ödəniş qeydə alına bilməz.');
   }
+  if (!delivery.confirmedAt) {
+    throw badRequest(
+      'Təsdiqlənməmiş çatdırılma üçün ödəniş qeydə alına bilməz. Əvvəlcə çatdırılmanı təsdiqləyin.',
+    );
+  }
 
   // Guards against inflating revenue beyond what the customer actually owes.
   const outstanding = delivery.totalAmount.minus(delivery.paidAmount);

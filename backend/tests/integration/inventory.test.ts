@@ -28,7 +28,7 @@ describe('inventory and stock accounting', () => {
     expect(b[workerKey(fx.worker!.id)]).toBe(50);
   });
 
-  it('deducts bottles from the worker when a delivery is created', async () => {
+  it('deducts bottles from the worker when a delivery is confirmed', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 50);
 
@@ -39,18 +39,33 @@ describe('inventory and stock accounting', () => {
     expect(b[WAREHOUSE]).toBe(50); // unchanged by the delivery itself
   });
 
-  it('refuses a delivery that exceeds the worker stock in hand', async () => {
+  it('refuses to confirm a delivery that exceeds the worker stock in hand', async () => {
     await stockIn(fx.admin!.token, 100);
     await issueStock(fx.admin!.token, fx.worker!.id, 10);
 
-    const res = await makeDelivery(fx.worker!.token, { bottleCount: 25 });
+    // Recording the drop is harmless: no stock moves until confirmation.
+    const created = await api
+      .post('/api/v1/deliveries')
+      .set(auth(fx.worker!.token))
+      .send({ idempotencyKey: key(), customerName: 'Test Customer', address: 'Test Street 1', bottleCount: 25 });
+    expect(created.statusCode).toBe(201);
+    expect(created.body.data.isConfirmed).toBe(false);
+    expect((await balances())[workerKey(fx.worker!.id)]).toBe(10);
+
+    // Confirming is where the balance is checked. It must refuse and leave the
+    // row pending rather than deducting what is not there.
+    const res = await api
+      .post(`/api/v1/deliveries/${created.body.data.id}/confirm`)
+      .set(auth(fx.worker!.token))
+      .send({});
     expect(res.statusCode).toBe(409);
     expect(res.body.error.message).toMatch(/kifayət qədər/i);
 
-    // Nothing was written: no delivery, no ledger entry.
-    expect(await prisma.delivery.count()).toBe(0);
+    // Nothing moved: no ledger entry, stock unchanged, still pending.
     expect(await prisma.inventoryTransaction.count({ where: { type: 'OUT_DELIVERY' } })).toBe(0);
     expect((await balances())[workerKey(fx.worker!.id)]).toBe(10);
+    const stored = await prisma.delivery.findUniqueOrThrow({ where: { id: created.body.data.id } });
+    expect(stored.confirmedAt).toBeNull();
   });
 
   it('refuses to issue more stock than the warehouse holds', async () => {

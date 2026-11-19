@@ -296,6 +296,14 @@ Get-Content prisma\integrity-verify.sql -Raw |
 
 Detallar: `docs/TESTING.md`.
 
+**Əlavə sənədlər:**
+
+- `docs/APK-TEST.md` — release APK-nın real cihazda yoxlanması (ikimərhələli
+  çatdırılma: yarat → təsdiqlə → ləğv et).
+- `docs/PROD-MIGRATION-2026-11-19.md` — canlı bazada aparılan miqrasiyanın
+  hesabatı və geri qaytarma planı.
+- `docs/VERCEL-DEPLOY.md` — Vercel buraxılış runbook-u və preflight nəticələri.
+
 ---
 
 ## 10. PRODUCTION

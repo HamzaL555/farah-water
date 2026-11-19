@@ -116,18 +116,18 @@ export const NewDeliveryScreen: React.FC = () => {
 
     if (!isConnected) {
       await enqueue('delivery', '/deliveries', body as unknown as Record<string, unknown>, body.idempotencyKey, `Çatdırılma · ${body.customerName ?? customerName} · ${count} bidon`);
-      return { queued: true as const };
+      return { queued: true as const, id: null as string | null };
     }
 
     try {
-      await deliveriesApi.create(body);
-      return { queued: false as const };
+      const created = await deliveriesApi.create(body);
+      return { queued: false as const, id: created.data.id };
     } catch (err) {
       // Only network-ish failures are worth queueing; a validation error must
       // reach the worker immediately so they can correct the form.
       if (err instanceof ApiError && err.isRetryable) {
         await enqueue('delivery', '/deliveries', body as unknown as Record<string, unknown>, body.idempotencyKey, `Çatdırılma · ${body.customerName ?? customerName} · ${count} bidon`);
-        return { queued: true as const };
+        return { queued: true as const, id: null as string | null };
       }
       throw err;
     }
@@ -146,10 +146,18 @@ export const NewDeliveryScreen: React.FC = () => {
     if (result.queued) {
       setQueuedOffline(true);
       setSnack('Bağlantı yoxdur. Çatdırılma növbəyə göndəriləcək.');
-    } else {
-      setSnack('Çatdırılma uğurla qeydə alındı.');
+      setTimeout(() => navigation.goBack(), 700);
+      return;
     }
-    setTimeout(() => navigation.goBack(), 700);
+
+    // Land on the row itself: recording is only half the flow, and the
+    // separate "Təsdiqlə" action must be one tap away.
+    setSnack('Çatdırılma qeydə alındı. Bidonlar hələ stokdan çıxmayıb.');
+    const id = result.id;
+    setTimeout(() => {
+      if (id) navigation.navigate('DeliveryDetail', { deliveryId: id });
+      else navigation.goBack();
+    }, 700);
   };
 
   return (

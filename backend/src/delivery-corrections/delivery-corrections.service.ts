@@ -47,6 +47,7 @@ export async function requestCorrection(
       bottleCount: true,
       workerId: true,
       status: true,
+      confirmedAt: true,
     },
   });
   if (!delivery) throw notFound('Çatdırılma tapılmadı.');
@@ -59,6 +60,13 @@ export async function requestCorrection(
   // Cannot correct a cancelled delivery.
   if (delivery.status === 'CANCELLED') {
     throw badRequest('Ləğv edilmiş çatdırılma düzəltilə bilməz.');
+  }
+
+  // Nor one whose stock has not been accepted yet.
+  if (!delivery.confirmedAt) {
+    throw badRequest(
+      'Təsdiqlənməmiş çatdırılma üçün düzəliş istənə bilməz. Əvvəlcə çatdırılmanı təsdiqləyin.',
+    );
   }
 
   // No duplicate pending corrections for the same delivery.
@@ -215,6 +223,9 @@ export async function reviewCorrection(
     if (input.status === 'APPROVED') {
       if (c.delivery.status === DeliveryStatus.CANCELLED) {
         throw badRequest('Ləğv edilmiş çatdırılma üçün düzəliş təsdiqlənə bilməz.');
+      }
+      if (!c.delivery.confirmedAt) {
+        throw badRequest('Təsdiqlənməmiş çatdırılma üçün düzəliş təsdiqlənə bilməz.');
       }
 
       // Use the delivery's CURRENT count, not the one captured when the worker

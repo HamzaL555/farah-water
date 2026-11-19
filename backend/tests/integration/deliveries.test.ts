@@ -58,6 +58,14 @@ describe('deliveries, payments and debts', () => {
     // revenue - an unpriced delivery is not a zero-value sale.
     expect((await listPayments(fx.admin!.token)).body.data.totalAmount).toBe(0);
 
+    // Confirm it first: money may only be attached once the balance accepted
+    // the delivery.
+    const confirmed = await api
+      .post(`/api/v1/deliveries/${d.id}/confirm`)
+      .set(auth(fx.worker!.token))
+      .send({});
+    expect(confirmed.statusCode).toBe(200);
+
     // Then the owner sets both at once and the ledger follows.
     const priced = await api
       .patch('/api/v1/deliveries/' + d.id)

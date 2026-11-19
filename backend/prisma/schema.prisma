@@ -131,6 +131,7 @@ model User {
 
   refreshTokens       RefreshToken[]
   deliveries          Delivery[]             @relation("DeliveryWorker")
+  confirmedDeliveries Delivery[]             @relation("DeliveryConfirmedBy")
   corrections         DeliveryCorrection[]   @relation("CorrectionRequestedBy")
   approvedCorrections DeliveryCorrection[]   @relation("CorrectionApprovedBy")
   recordedPay         Payment[]              @relation("PaymentRecordedBy")
@@ -277,6 +278,15 @@ model Delivery {
   deliveredAt DateTime
   note        String?
 
+  /// Iki mərhələli çatdırılma. Sətir yaradılanda anbar hərəkəti OLMUR: bidonlar
+  /// yalnız ayrıca təsdiq (`/deliveries/:id/confirm`) zamanı balansdan çıxır.
+  /// `confirmedAt` null olduqca çatdırılma "gözləmədədir" və maliyyə
+  /// hesablamalarına daxil edilmir. Köhnə sətirlər miqrasiyada təsdiqlənmiş
+  /// kimi işarələnir, çünki onların stoku artıq çıxılıb.
+  confirmedAt      DateTime?
+  confirmedById    String?
+  confirmationNote String?
+
   cancelledAt   DateTime?
   cancelledById String?
   cancelReason  String?
@@ -288,6 +298,7 @@ model Delivery {
   worker      User                   @relation("DeliveryWorker", fields: [workerId], references: [id], onDelete: Restrict)
   company     Company?               @relation(fields: [companyId], references: [id], onDelete: Restrict)
   office      Office?                @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  confirmedBy User?                  @relation("DeliveryConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
   payments    Payment[]
   debtsAdj    DebtAdjustment[]
   corrections DeliveryCorrection[]
@@ -300,6 +311,7 @@ model Delivery {
   @@index([destinationType, deliveredAt])
   @@index([waterType, deliveredAt])
   @@index([officeId])
+  @@index([confirmedAt])
   @@map("deliveries")
 }
 

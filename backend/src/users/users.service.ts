@@ -270,7 +270,12 @@ export async function listWorkersWithStats(actor: Actor) {
     prisma.inventoryBalance.findMany({ where: { workerId: { in: ids } } }),
     prisma.delivery.groupBy({
       by: ['workerId'],
-      where: { workerId: { in: ids }, deliveredAt: { gte: dayStart, lt: dayEnd } },
+      where: {
+        workerId: { in: ids },
+        deliveredAt: { gte: dayStart, lt: dayEnd },
+        status: { not: 'CANCELLED' },
+        confirmedAt: { not: null },
+      },
       _sum: { bottleCount: true },
       _count: { _all: true },
     }),
@@ -282,13 +287,18 @@ export async function listWorkersWithStats(actor: Actor) {
     }),
     prisma.delivery.groupBy({
       by: ['workerId'],
-      where: { workerId: { in: ids }, status: { not: 'CANCELLED' } },
+      where: { workerId: { in: ids }, status: { not: 'CANCELLED' }, confirmedAt: { not: null } },
       _count: { _all: true },
       _sum: { bottleCount: true },
     }),
     prisma.delivery.groupBy({
       by: ['workerId'],
-      where: { workerId: { in: ids }, debtAmount: { gt: 0 }, status: { not: 'CANCELLED' } },
+      where: {
+        workerId: { in: ids },
+        debtAmount: { gt: 0 },
+        status: { not: 'CANCELLED' },
+        confirmedAt: { not: null },
+      },
       _sum: { debtAmount: true },
     }),
   ]);
@@ -335,7 +345,7 @@ export async function getWorkerDetail(id: string, actor: Actor) {
   const filtered = balances.find((b) => b.waterType === WaterType.FILTERED)?.quantity ?? 0;
   const spring = balances.find((b) => b.waterType === WaterType.SPRING)?.quantity ?? 0;
   const debt = await prisma.delivery.aggregate({
-    where: { workerId: id, debtAmount: { gt: 0 }, status: { not: 'CANCELLED' } },
+    where: { workerId: id, debtAmount: { gt: 0 }, status: { not: 'CANCELLED' }, confirmedAt: { not: null } },
     _sum: { debtAmount: true },
   });
 

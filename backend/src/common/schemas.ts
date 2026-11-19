@@ -57,6 +57,13 @@ export const cancelDeliverySchema = z.object({
   reason: z.string().trim().min(3, 'Läğv səbəbi yazılmalıdır.').max(500),
 });
 
+export const confirmDeliverySchema = z
+  .object({
+    note: z.string().trim().max(500).optional(),
+  })
+  // POST bodies from a plain button click may be absent; treat that as "no note".
+  .default({});
+
 export const listPaymentsSchema = z.object({
   deliveryId: z.string().uuid().optional(),
   workerId: z.string().uuid().optional(),
@@ -146,6 +153,7 @@ export const listDeliveriesSchema = z.object({
   from: dateFromQuery,
   to: dateFromQuery,
   onlyDebts: z.coerce.boolean().optional(),
+  confirmation: z.enum(['PENDING', 'CONFIRMED']).optional(),
   page: intFromQuery(1, 100000),
   pageSize: intFromQuery(1, 100),
   sortBy: z.enum(['deliveredAt', 'totalAmount', 'debtAmount', 'bottleCount']).optional(),
