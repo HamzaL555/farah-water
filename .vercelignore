@@ -14,6 +14,8 @@ coverage/
 # Local secrets and one-off request bodies
 .env
 .env.*
+backend/.env
+backend/.env.*
 db_url*.txt
 login_body.json
 gitcreds

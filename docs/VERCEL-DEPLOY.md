@@ -1,7 +1,8 @@
 # Vercel-ə buraxılış runbook-u
 
-Bu sənəd **hazırlığı** təsvir edir. Bu addımlar yerinə yetirilib, lakin
-**canlı deploy edilməyib** — istifadəçinin təsdiqi gözlənilir (bax: Bloklayıcı).
+Bu sənəd hazırlığı və **19.11.2026-da edilmiş faktiki deploy-u** təsvir edir.
+Deploy istifadəçinin açıq təsdiqi ilə aparılıb (səbəb: bazanın miqrasiyası
+köhnə build-in stok əməliyyatlarını dayandırmışdı — bax: "Keçid pəncərəsi").
 
 ## Layihənin faktiki quruluşu
 
@@ -15,9 +16,10 @@ Bu sənəd **hazırlığı** təsvir edir. Bu addımlar yerinə yetirilib, lakin
 | Statik panel | `backend/public/admin/**` |
 | Domen | `https://farah-water.vercel.app` (API: `/api/v1`, panel: `/admin`, işçi: `/isci`) |
 
-Son canlı deployment: **2 noyabr 2026** (`dpl_9L35zZncUazVrvTe1Bw66Lup8DU9`).
-Yəni canlı backend hələ təsdiq funksiyası olmayan köhnə build-dir. Baza isə
-artıq yeni sxemə keçib — bu, aşağıdakı "Keçid pəncərəsi" bölməsində izah olunur.
+Son canlı deployment: **19 noyabr 2026**
+(`farah-water-3y2o2beaz-hamza-4033`, `dpl_` ailəsi — bax: "Deploy nəticəsi").
+Ondan əvvəlki canlı build **2 noyabr 2026** tarixli idi və iki mərhələli təsdiq
+funksiyası yox idi; həmin build artıq əvəzlənib.
 
 ## Ön yoxlama nəticələri (19.11.2026)
 
@@ -84,18 +86,34 @@ Faktiki nəticə (19.11.2026, CLI 64.5.0):
 
 | Artefakt | Nəticə |
 |---|---|
-| `functions/backend/src/main.ts` | 1 439 fayl, 33 131 986 bayt (Prisma client daxil) |
+| `functions/backend/src/main.ts` | 1 440 fayl, ~50,7 MB (Prisma client + 2 engine) |
 | `static/backend/public/admin/` | `index.html` (4 076), `app.js` (144 675), `styles.css` (17 637), `manifest.webmanifest`, ikonlar |
-| `config.json` | `/api/*` → funksiya, `/admin/*` → statik panel |
+| `config.json` | `/api/*` → funksiya, `/admin/*` və `/isci` → statik panel |
+
+> **Prisma `binaryTargets` vacibdir.** `vercel build` Windows-da işlədildikdə
+> `prisma generate` yalnız Windows engine yaradır və funksiya Linux-da
+> `Prisma Client could not locate the Query Engine for runtime "rhel-openssl-3.0.x"`
+> xətası ilə çökür (`FUNCTION_INVOCATION_FAILED`). Ona görə
+> `backend/prisma/schema.prisma` daxilində:
+>
+> ```prisma
+> generator client {
+>   provider      = "prisma-client-js"
+>   binaryTargets = ["native", "rhel-openssl-3.0.x"]
+> }
+> ```
+>
+> Build-dan əvvəl `npx prisma generate` işlədin və `.prisma/client` daxilində
+> `libquery_engine-rhel-openssl-3.0.x.so.node` faylının olduğunu yoxlayın.
 
 > **`.vercelignore` vacibdir.** `mobile/` qovluğunda Gradle/CMake artefaktları
 > var; onlar olmadan upload çox böyüyür və rastgələn fayl xətaları verir.
 > Repoya əlavə olunmuş `.vercelignore` yalnız `backend/` və
-> `backend/public/admin/`-ı yükləyir. İlk cəhd (`mobile/android/app/.cxx/…`)
-> məhz bu səbəbdən `ENOENT` ilə uğursuz olmuşdu; `.vercelignore` əlavə
-> edildikdən sonra build təmiz keçdi.
+> `backend/public/admin/`-ı yükləyir; `backend/.env` isə funksiya paketinə
+> **düşmür** (sekreTLər yalnız Vercel mühit dəyişənlərindən gəlir). İlk cəhd
+> (`mobile/android/app/.cxx/…`) məhz bu səbəbdən `ENOENT` ilə uğursuz olmuşdu.
 
-## Deploy (TƏSDİQ TƏLƏB OLUNUR)
+## Deploy
 
 ```powershell
 # 1) prebuilt artefaktı yarat
@@ -107,15 +125,28 @@ npx.cmd vercel deploy --prebuilt --prod
 
 Alternativ (prebuilt olmadan): `npx.cmd vercel --prod`.
 
-### Bloklayıcı: plan
+### Deploy nəticəsi (19.11.2026, təsdiqdən sonra)
 
-Vercel **Hobby** planı kommersiya istifadəsinə icazə vermir. Bu layihə real
-müştərilərlə kommersiya sistemidir. Deploy etməzdən əvvəl:
+| | |
+|---|---|
+| Deployment | `farah-water-3y2o2beaz-hamza-4033.vercel.app` |
+| Production alias | `https://farah-water.vercel.app` |
+| Runtime | Node.js 24.x, region `fra1`/`sfo1` |
+| `GET /api/v1/health` | `200 {"data":{"status":"ok",…}}` |
+| `GET /admin`, `/isci` | `200` (panel HTML) |
+| `GET /api/v1/deliveries` (tokensiz) | `401` — gözlənilən |
+| `POST /api/v1/deliveries/:id/confirm` (tokensiz) | `401` — endpoint mövcuddur |
+| Baza | dəyişməyib: `users 2 / customers 3 / deliveries 3 / payments 2 / tx 8 / audit 40` |
 
-- uyğun **Pro** plana keçin, **və ya**
-- yazılı şəkildə Hobby-də qalmağı qəbul edin (risk sizin üzərinizdədir).
+İlk deploy (`farah-water-kok3dkq6g…`) Prisma engine səbəbindən
+`FUNCTION_INVOCATION_FAILED` verdi; `binaryTargets` düzəlişindən sonra yenidən
+buraxıldı. Fasilə ~4 dəqiqə davam etdi və bu müddətdə heç bir sətir yazılmadı.
 
-Bu sənəd hazırlanarkən **heç bir plan dəyişdirilməyib və deploy edilməyib**.
+### Plan barədə
+
+Vercel **Hobby** planı kommersiya istifadəsinə icazə vermir. Deploy istifadəçinin
+açıq təsdiqi ilə edildi (fasiləni aradan qaldırmaq üçün). Kommersiya istifadəsi
+üçün **Pro** plana keçid ayrıca, hələ açıq qalan qərardır.
 
 ## Keçid pəncərəsi (köhnə build ↔ yeni baza) — KRİTİK
 

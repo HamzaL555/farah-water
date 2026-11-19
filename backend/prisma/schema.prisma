@@ -6,6 +6,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // `native` covers local Windows/Linux development; Vercel functions run on
+  // Amazon Linux 2023, which Prisma names `rhel-openssl-3.0.x`. Without the
+  // second target the generated client only ships a Windows engine and every
+  // request fails with "could not locate the Query Engine for runtime".
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

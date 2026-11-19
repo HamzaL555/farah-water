@@ -102,15 +102,16 @@ All migrations have been successfully applied.
 
 ## 7. Bilməli olduğunuz üç şey
 
-0. **Miqrasiya tətbiq olundu, backend isə hələ köhnədir — bu, fasilə yaradır.**
+0. **Miqrasiya tətbiq olundu, backend isə bir müddət köhnə qaldı — bu, qısa
+   fasilə yaratdı və sonra deploy ilə həll olundu.**
    `20261102140000_warehouse_water_type` balans açarlarını dəyişdiyi üçün köhnə
-   build-in stok əməliyyatları (`WAREHOUSE`, `WORKER:<id>`) artıq mövcud olmayan
-   sətirlərə müraciət edir: çatdırılma yaratmaq `409` verir, anbar `0` görünür.
-   Yəni **yeni backend deploy edilənə qədər gündəlik stok işi dayanır**. Ətraflı:
-   [`VERCEL-DEPLOY.md`](./VERCEL-DEPLOY.md) → "Keçid pəncərəsi". Miqrasiyadan
-   sonra bazada heç bir yeni sətir yazılmayıb (yoxlanılıb: `audit_logs` = 40,
-   `deliveries` = 3, `inventory_transactions` = 8), ona görə geri qaytarma
-   itkisizdir.
+   build-in stok əməliyyatları (`WAREHOUSE`, `WORKER:<id>`) mövcud olmayan
+   sətirlərə müraciət edirdi: çatdırılma yaratmaq `409` verirdi, anbar `0`
+   görünürdü. Yeni backend 19.11.2026 tarixində deploy edildi və funksiya
+   bərpa olundu. Fasilə zamanı bazada heç bir yeni sətir yazılmadı (yoxlanılıb:
+   `audit_logs` = 40, `deliveries` = 3, `inventory_transactions` = 8).
+   Gələcəkdə düzgün ardıcıllıq: **əvvəl deploy, sonra miqrasiya** — ətraflı:
+   [`VERCEL-DEPLOY.md`](./VERCEL-DEPLOY.md) → "Keçid pəncərəsi".
 
 1. **Qiymətlər 0.00-dır.** Miqrasiya qiymət uydurmur. Canlıya keçdikdən sonra
    panelin **Qiymətlər** bölməsində Filtr və Bulaq üçün real qiyməti yazın.

@@ -3,12 +3,10 @@
 Bu sənəd hazırlanmış release APK-nın **əsl telefonda** yoxlanması üçün addımları
 və iki mərhələli çatdırılma axınının gözlənilən nəticələrini saxlayır.
 
-> **Vacib şərt (bloklayıcı):** APK sabit olaraq
-> `https://farah-water.vercel.app/api/v1` ünvanına qoşulur. Həmin ünvanda hələ
-> **2 noyabr 2026** build-i işləyir və orada `POST /deliveries/:id/confirm`
-> endpointi **yoxdur**. Yəni 6-cı addımdan sonrakı yoxlamalar yalnız yeni backend
-> deploy edildikdən sonra keçərli olacaq. Deploy istifadəçi təsdiqi gözləyir
-> (bax: [`VERCEL-DEPLOY.md`](./VERCEL-DEPLOY.md)).
+> **Vəziyyət (19.11.2026):** yeni backend canlıya buraxılıb
+> (`https://farah-water.vercel.app`, `POST /deliveries/:id/confirm` mövcuddur,
+> tokensiz sorğu `401` qaytarır). Yəni bu sənəddəki yoxlamalar artıq keçirilə
+> bilər. Deploy detalları: [`VERCEL-DEPLOY.md`](./VERCEL-DEPLOY.md).
 
 ## 1. Artefakt
 
