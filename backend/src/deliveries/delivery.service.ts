@@ -23,7 +23,7 @@ type PrismaClientLike = Prisma.TransactionClient | typeof prisma;
 
 /** The relation set every deliveries response needs (list, detail, confirm). */
 const DELIVERY_RELATIONS = {
-  customer: { select: { id: true, name: true, phone: true, address: true } },
+  customer: { select: { id: true, name: true, phone: true, address: true, latitude: true, longitude: true } },
   worker: { select: { id: true, fullName: true, username: true } },
   company: { select: { id: true, name: true } },
   office: { select: { id: true, name: true } },

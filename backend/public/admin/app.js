@@ -588,6 +588,33 @@
       '</div>';
   }
 
+  /**
+   * Dependency-free horizontal bar chart.
+   *
+   * The panel has to stay readable on a phone and must never pull a charting
+   * library over a metered mobile connection, so every bar is a div whose width
+   * is a percentage of the largest absolute value in the group. Negative
+   * values are drawn in the danger colour instead of going off-screen.
+   */
+  function barChart(rows) {
+    var max = 0;
+    rows.forEach(function (r) {
+      var v = Math.abs(Number(r.value) || 0);
+      if (v > max) max = v;
+    });
+    if (max === 0) return '<div class="empty">Məlumat yoxdur.</div>';
+    return '<div class="chart">' + rows.map(function (r) {
+      var v = Number(r.value) || 0;
+      var pct = Math.round((Math.abs(v) / max) * 100);
+      var cls = v < 0 ? 'is-negative' : (r.cls || '');
+      return '<div class="chart-row">' +
+        '<span class="chart-label">' + esc(r.label) + '</span>' +
+        '<span class="chart-track"><span class="chart-fill ' + cls + '" style="width:' + pct + '%"></span></span>' +
+        '<span class="chart-val">' + esc(r.text !== undefined ? r.text : money(v)) + '</span>' +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
   function statusBadge(s) {
     var st = STATUS[s] || { label: s || '—', cls: 'badge-muted' };
     return '<span class="badge ' + st.cls + '">' + esc(st.label) + '</span>';
@@ -694,9 +721,14 @@
 
   function textField(id, label, value, opts) {
     opts = opts || {};
+    var v = esc(value === null || value === undefined ? '' : value);
+    // A long street address needs a real textarea; rows="" on an <input> is
+    // silently ignored by every browser.
+    var control = opts.multiline
+      ? '<textarea id="' + id + '" rows="3">' + v + '</textarea>'
+      : '<input id="' + id + '" type="' + (opts.type || 'text') + '" value="' + v + '" />';
     return '<label class="field"><span class="field-label">' + esc(label) + '</span>' +
-      '<input id="' + id + '" type="' + (opts.type || 'text') + '" ' +
-      (opts.multiline ? 'rows="3"' : '') + ' value="' + esc(value === null || value === undefined ? '' : value) + '" />' +
+      control +
       '</label>';
   }
 
@@ -958,6 +990,12 @@
     var fin = d.finance || {};
     var del = d.deliveries || {};
     var wh = invSum.warehouse || { filtered: 0, spring: 0, total: 0 };
+    // Per-water-type deposit totals. Deposits are money the company holds, not
+    // revenue, so they get their own visual block rather than a revenue card.
+    var depSum = await api('GET', '/deposits?pageSize=1');
+    var depTotal = (depSum.totals && depSum.totals.byType) || {};
+    var depF = depTotal.FILTERED || { amount: 0, bottleCount: 0 };
+    var depS = depTotal.SPRING || { amount: 0, bottleCount: 0 };
 
     var html = '<div class="wh-grid">' +
       waterCard('Anbarda Bulaq', wh.spring, 'spring') +
@@ -1002,12 +1040,37 @@
         ['Mənfəət', money(profit.filtered), money(profit.spring), '<strong>' + money(profit.total) + '</strong>'],
       ], 'Məlumat yoxdur'), true);
 
+    html += '<div class="chart-grid">' +
+      panel('Gəlir / xərc / mənfəət', '',
+        barChart([
+          { label: 'Filtr gəlir', value: rev.filtered, text: money(rev.filtered) + ' AZN', cls: 'is-blue' },
+          { label: 'Bulaq gəlir', value: rev.spring, text: money(rev.spring) + ' AZN', cls: 'is-green' },
+          { label: 'Filtr xərc', value: exp.filtered, text: money(exp.filtered) + ' AZN', cls: 'is-amber' },
+          { label: 'Bulaq xərc', value: exp.spring, text: money(exp.spring) + ' AZN', cls: 'is-amber' },
+          { label: 'Filtr mənfəət', value: profit.filtered, text: money(profit.filtered) + ' AZN', cls: 'is-blue' },
+          { label: 'Bulaq mənfəət', value: profit.spring, text: money(profit.spring) + ' AZN', cls: 'is-green' },
+        ])) +
+      panel('Depozitlər (müştərilərdə saxlanılan)', '',
+        barChart([
+          { label: 'Filtr pulu', value: depF.amount, text: money(depF.amount) + ' AZN', cls: 'is-blue' },
+          { label: 'Bulaq pulu', value: depS.amount, text: money(depS.amount) + ' AZN', cls: 'is-green' },
+          { label: 'Filtr bidon', value: depF.bottleCount, text: depF.bottleCount + ' bidon', cls: 'is-blue' },
+          { label: 'Bulaq bidon', value: depS.bottleCount, text: depS.bottleCount + ' bidon', cls: 'is-green' },
+        ]) +
+        '<div class="small muted" style="margin-top:10px">Depozit satış gəliri deyil — ' +
+          'ayrıca saxlanılır və yalnız qaytarılanda azalır.</div>') +
+      '</div>';
+
     html += '<div class="cards">' +
       card('Ümumi gəlir', withMoney(rev.total || 0), 'good', 'yalnız real ödənişlər') +
       card('Ümumi xərc', withMoney(exp.total || 0), 'bad', exp.shared ? money(exp.shared) + ' AZN ümumi' : '') +
       card('Mənfəət', withMoney(profit.total || 0), profit.total >= 0 ? 'good' : 'bad') +
       card('Depozitdə saxlanan', withMoney(fin.depositsHeld || 0), '', (fin.depositBottlesHeld || 0) + ' bidon') +
       card('Gözləyən qiymət sorğusu', fin.pendingPriceRequests || 0, fin.pendingPriceRequests ? 'bad' : '') +
+      '</div>' +
+      '<div class="cards">' +
+      card('Filtr depoziti', withMoney(depF.amount || 0), 'blue', (depF.bottleCount || 0) + ' bidon') +
+      card('Bulaq depoziti', withMoney(depS.amount || 0), 'green', (depS.bottleCount || 0) + ' bidon') +
       '</div>';
 
     view.innerHTML = html +
@@ -1638,7 +1701,7 @@
       var r = [
         esc(c.name),
         esc(c.phone || '—'),
-        esc(c.address),
+        mapsLink(c.address, c.latitude, c.longitude),
         String(c.deliveryCount || 0),
         String(c.totalBottles || 0),
         money(c.totalDebt),
@@ -1675,14 +1738,22 @@
         textField('c-name', 'Ad, Soyad', '') +
         textField('c-phone', 'Telefon (istəyə bağlı)', '', { type: 'tel' }) +
         textField('c-addr', 'Ünvan', '', { multiline: true }) +
+        textField('c-lat', 'En dairəsi (latitude, istəyə bağlı)', '') +
+        textField('c-lng', 'Uzunluq (longitude, istəyə bağlı)', '') +
+        '<div class="alert alert-info small">Koordinat yazmasanız da ünvan Google Maps axtarışında açılacaq. ' +
+          'Dəqiq qapı üçün Google Maps-də ünvana sağ klik → “What’s here?” ilə koordinatı götürün.</div>' +
         textField('c-note', 'Qeyd (istəyə bağlı)', ''),
         [
           { label: 'Ləğv et', kind: 'outline' },
           { label: 'Yarat', kind: 'primary', onClick: function () {
+            var lat = $('#c-lat').value.trim();
+            var lng = $('#c-lng').value.trim();
             return api('POST', '/customers', {
               name: $('#c-name').value.trim(),
               phone: $('#c-phone').value.trim() || undefined,
               address: $('#c-addr').value.trim(),
+              latitude: lat === '' ? undefined : Number(lat),
+              longitude: lng === '' ? undefined : Number(lng),
               note: $('#c-note').value.trim() || undefined,
             }).then(function () {
               closeModal();
@@ -1694,12 +1765,49 @@
     });
   }
 
-  // ------------------------------------------------- customer deposits ---
+  // ------------------------------------------------- maps (Maps URLs) -----
+  // Google's documented, key-less Maps URLs scheme. No Geocoding API call is
+  // made, so opening a route costs nothing.
+  function mapsQuery(address, lat, lng) {
+    if (lat !== null && lat !== undefined && lat !== '' && lng !== null && lng !== undefined && lng !== '') {
+      return lat + ',' + lng;
+    }
+    return address || '';
+  }
+
   /** Tapping an address opens it in Google Maps, as the customer asked. */
-  function mapsLink(address) {
-    if (!address) return '—';
+  function mapsLink(address, lat, lng) {
+    var q = mapsQuery(address, lat, lng);
+    if (!q) return '—';
     return '<a href="https://www.google.com/maps/search/?api=1&query=' +
-      encodeURIComponent(address) + '" target="_blank" rel="noopener">' + esc(address) + '</a>';
+      encodeURIComponent(q) + '" target="_blank" rel="noopener">' + esc(address || q) + '</a>';
+  }
+
+  /** Turn-by-turn navigation to the customer, starting from the phone's GPS. */
+  function mapsRouteUrl(address, lat, lng) {
+    return 'https://www.google.com/maps/dir/?api=1&destination=' +
+      encodeURIComponent(mapsQuery(address, lat, lng));
+  }
+
+  function mapButton(address, lat, lng, label) {
+    if (!mapsQuery(address, lat, lng)) return '';
+    return '<a class="btn btn-outline btn-sm map-btn" target="_blank" rel="noopener"' +
+      ' title="Google Maps ilə marşrut" href="' + mapsRouteUrl(address, lat, lng) + '">' +
+      (label || '📍 Marşrut') + '</a>';
+  }
+
+  /**
+   * Coordinates safe to use for a delivery.
+   *
+   * A delivery keeps its own address snapshot, while the customer record keeps
+   * the CURRENT address. If the customer moved after the delivery was recorded,
+   * its old coordinates would send the driver to the wrong door, so the pin is
+   * used only while both addresses still match. Otherwise the address snapshot
+   * is searched instead.
+   */
+  function deliveryCoords(d) {
+    if (!d.customerAddress || d.address !== d.customerAddress) return [null, null];
+    return [d.customerLatitude, d.customerLongitude];
   }
 
   function depositBadge(type) {
@@ -1717,10 +1825,15 @@
   async function openCustomerDetail(id) {
     var c = await api('GET', '/customers/' + id);
 
+    var byType = c.depositByType || {};
+    var depF = byType.FILTERED || { balance: 0, bottleBalance: 0 };
+    var depS = byType.SPRING || { balance: 0, bottleBalance: 0 };
+
     var depositRows = (c.deposits || []).map(function (d) {
       var sign = d.amount > 0 ? '+' : d.amount < 0 ? '−' : '';
       return [
         dateTimeFull(d.occurredAt),
+        waterBadge(d.waterType),
         depositBadge(d.type),
         sign + money(Math.abs(d.amount)) + ' AZN',
         (d.bottleCount > 0 ? '+' : '') + d.bottleCount,
@@ -1743,27 +1856,46 @@
       ];
     });
 
+    // Deposit money is admin-only. The server already omits it for a worker;
+    // showing "+ Depozit qəbul et" buttons that would 403 is worse than hiding
+    // them, so the whole deposit block is built conditionally.
+    var admin = isAdmin();
+    var depositKv = admin
+      ? '<dt>Depozit (cəmi)</dt><dd><strong>' + money(c.depositBalance || 0) + ' AZN</strong> · ' +
+          (c.depositBottleBalance || 0) + ' bidon</dd>' +
+        '<dt>Filtr depoziti</dt><dd>' + money(depF.balance) + ' AZN · ' + depF.bottleBalance + ' bidon</dd>' +
+        '<dt>Bulaq depoziti</dt><dd>' + money(depS.balance) + ' AZN · ' + depS.bottleBalance + ' bidon</dd>'
+      : '';
+    var depositBlock = admin
+      ? '<div class="toolbar" style="margin:0 0 12px">' +
+          '<button class="btn btn-primary btn-sm" id="dep-in">+ Depozit qəbul et</button>' +
+          '<button class="btn btn-secondary btn-sm" id="dep-out">− Depozit qaytar</button>' +
+          '<button class="btn btn-outline btn-sm" id="dep-adj">Düzəliş</button>' +
+        '</div>' +
+        '<h4 class="mt">Depozit tarixçəsi</h4>' +
+        table([
+          { label: 'Tarix / saat' }, { label: 'Su' }, { label: 'Əməliyyat' }, { label: 'Məbləğ', num: true },
+          { label: 'Bidon', num: true }, { label: 'Balans', num: true },
+          { label: 'Bidon balansı', num: true }, { label: 'Qeyd' }, { label: 'Kim' },
+        ], depositRows, 'Depozit hərəkəti yoxdur.')
+      : '';
+
     openModal('Müştəri · ' + (c.name || ''),
       '<dl class="kv">' +
-        '<dt>Telefon</dt><dd>' + esc(c.phone || '—') + '</dd>' +
-        '<dt>Ünvan</dt><dd>' + mapsLink(c.address) + '</dd>' +
+        '<dt>Telefon</dt><dd>' + (c.phone
+          ? '<a href="tel:' + esc(c.phone) + '">' + esc(c.phone) + '</a>'
+          : '—') + '</dd>' +
+        '<dt>Ünvan</dt><dd>' + mapsLink(c.address, c.latitude, c.longitude) + '</dd>' +
         '<dt>Borc</dt><dd>' + money(c.totalDebt) + ' AZN</dd>' +
-        '<dt>Depozit balansı</dt><dd><strong>' + money(c.depositBalance || 0) + ' AZN</strong></dd>' +
-        '<dt>Depozit bidonları</dt><dd><strong>' + (c.depositBottleBalance || 0) + ' bidon</strong></dd>' +
+        depositKv +
         '<dt>Çatdırılma</dt><dd>' + (c.deliveryCount || 0) + '</dd>' +
         (c.note ? '<dt>Qeyd</dt><dd>' + esc(c.note) + '</dd>' : '') +
       '</dl>' +
       '<div class="toolbar" style="margin:12px 0 0">' +
-        '<button class="btn btn-primary btn-sm" id="dep-in">+ Depozit qəbul et</button>' +
-        '<button class="btn btn-secondary btn-sm" id="dep-out">− Depozit qaytar</button>' +
-        '<button class="btn btn-outline btn-sm" id="dep-adj">Düzəliş</button>' +
+        mapButton(c.address, c.latitude, c.longitude, '📍 Marşrut') +
+        '<button class="btn btn-outline btn-sm" id="cust-edit">✏️ Redaktə</button>' +
       '</div>' +
-      '<h4 class="mt">Depozit tarixçəsi</h4>' +
-      table([
-        { label: 'Tarix / saat' }, { label: 'Əməliyyat' }, { label: 'Məbləğ', num: true },
-        { label: 'Bidon', num: true }, { label: 'Balans', num: true },
-        { label: 'Bidon balansı', num: true }, { label: 'Qeyd' }, { label: 'Kim' },
-      ], depositRows, 'Depozit hərəkəti yoxdur.') +
+      depositBlock +
       '<h4 class="mt">Son çatdırılmalar</h4>' +
       table([
         { label: 'Tarix' }, { label: 'Su' }, { label: 'Bidon', num: true },
@@ -1772,9 +1904,44 @@
       ], deliveryRows, 'Çatdırılma yoxdur.'),
       [{ label: 'Bağla', kind: 'outline' }]);
 
-    $('#dep-in').addEventListener('click', function () { depositForm(c, 'DEPOSIT_IN'); });
-    $('#dep-out').addEventListener('click', function () { depositForm(c, 'DEPOSIT_OUT'); });
-    $('#dep-adj').addEventListener('click', function () { depositForm(c, 'ADJUSTMENT'); });
+    $('#cust-edit').addEventListener('click', function () { closeModal(); customerEditForm(c); });
+    if (admin) {
+      $('#dep-in').addEventListener('click', function () { depositForm(c, 'DEPOSIT_IN'); });
+      $('#dep-out').addEventListener('click', function () { depositForm(c, 'DEPOSIT_OUT'); });
+      $('#dep-adj').addEventListener('click', function () { depositForm(c, 'ADJUSTMENT'); });
+    }
+  }
+
+  /** Edit the address/phone/pin. Past deliveries keep their own snapshot. */
+  function customerEditForm(c) {
+    openModal('Müştəri redaktəsi — ' + (c.name || ''),
+      textField('ce-name', 'Ad, Soyad', c.name || '') +
+      textField('ce-phone', 'Telefon', c.phone || '', { type: 'tel' }) +
+      textField('ce-addr', 'Ünvan', c.address || '', { multiline: true }) +
+      textField('ce-lat', 'En dairəsi (latitude, istəyə bağlı)', c.latitude == null ? '' : String(c.latitude)) +
+      textField('ce-lng', 'Uzunluq (longitude, istəyə bağlı)', c.longitude == null ? '' : String(c.longitude)) +
+      '<div class="alert alert-info small">Koordinatları Google Maps-də ünvana sağ klik → ' +
+        '“What’s here?” ilə götürüb buraya yazsanız, marşrut dəqiq qapıya aparacaq.</div>',
+      [
+        { label: 'Ləğv et', kind: 'outline' },
+        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+          var lat = $('#ce-lat').value.trim();
+          var lng = $('#ce-lng').value.trim();
+          var body = {
+            name: $('#ce-name').value.trim(),
+            phone: $('#ce-phone').value.trim() || null,
+            address: $('#ce-addr').value.trim(),
+            latitude: lat === '' ? null : Number(lat),
+            longitude: lng === '' ? null : Number(lng),
+          };
+          if (body.address.length < 3) throw new Error('Ünvan yazılmalıdır.');
+          return api('PATCH', '/customers/' + c.id, body).then(function () {
+            closeModal();
+            toast('Müştəri yeniləndi.', 'ok');
+            openCustomerDetail(c.id);
+          });
+        } },
+      ]);
   }
 
   /**
@@ -1784,43 +1951,98 @@
   function depositForm(c, type) {
     var label = DEPOSIT_TYPE[type].label;
     var isAdjustment = type === 'ADJUSTMENT';
-    openModal(label + ' — ' + (c.name || ''),
-      '<div class="alert alert-info">Mövcud depozit: <strong>' + money(c.depositBalance || 0) + ' AZN</strong> · ' +
-        '<strong>' + (c.depositBottleBalance || 0) + ' bidon</strong></div>' +
-      moneyField('dp-amount', isAdjustment ? 'Məbləğ (mənfi də ola bilər)' : 'Məbləğ (AZN)', '') +
-      '<label class="field"><span class="field-label">' +
-        (isAdjustment ? 'Bidon sayı (mənfi də ola bilər)' : 'Bidon sayı') + '</span>' +
-        '<input id="dp-bottles" type="number" step="1" value="0" /></label>' +
-      textField('dp-note', 'Qeyd / səbəb', ''),
-      [
-        { label: 'Ləğv et', kind: 'outline' },
-        { label: 'Yadda saxla', kind: 'primary', onClick: function () {
-          var amount = $('#dp-amount').value.trim();
-          var bottles = $('#dp-bottles').value.trim() || '0';
-          if (amount === '' || Number.isNaN(Number(amount))) {
-            throw new Error('Məbləğ düzgün yazılmalıdır.');
-          }
-          if (!isAdjustment && Number(amount) <= 0) {
-            throw new Error('Məbləğ sıfırdan böyük olmalıdır.');
-          }
-          if (Number(bottles) < 0) throw new Error('Bidon sayı mənfi ola bilməz.');
-          if (type === 'DEPOSIT_OUT' && Number(amount) > Number(c.depositBalance || 0)) {
-            throw new Error('Mövcud depozitdən (' + money(c.depositBalance || 0) + ' AZN) çox qaytarmaq olmaz.');
-          }
-          return api('POST', '/deposits', {
-            idempotencyKey: idem('dep'),
-            customerId: c.id,
-            type: type,
-            amount: amount,
-            bottleCount: Number(bottles),
-            note: $('#dp-note').value.trim() || undefined,
-          }).then(function () {
-            closeModal();
-            toast('Depozit əməliyyatı yazıldı.', 'ok');
-            openCustomerDetail(c.id);
-          });
-        } },
-      ]);
+    var byType = c.depositByType || {};
+    var prices = { FILTERED: 0, SPRING: 0 };
+
+    return api('GET', '/deposits/settings').then(function (p) {
+      prices = p || prices;
+    }).catch(function () {}).then(function () {
+      function segWater() {
+        var on = $('#dp-water-seg .is-on');
+        return on ? on.dataset.v : 'FILTERED';
+      }
+      function priceFor(w) { return Number(prices[w] || 0); }
+      function labelFor(w) { return w === 'SPRING' ? 'Bulaq' : 'Filtr'; }
+      function typeBalance(w) {
+        var b = byType[w] || { balance: 0, bottleBalance: 0 };
+        return b;
+      }
+      function syncHint() {
+        var w = segWater();
+        var n = Math.abs(parseInt($('#dp-bottles').value, 10) || 0);
+        var unit = priceFor(w);
+        var bal = typeBalance(w);
+        $('#dp-hint').innerHTML =
+          labelFor(w) + ': müştəridə <strong>' + bal.bottleBalance + ' bidon</strong>, ' +
+          '<strong>' + money(bal.balance) + ' AZN</strong> · qiymət <strong>' + money(unit) +
+          ' AZN</strong>/bidon' + (n ? ' · cəmi <strong>' + money(unit * n) + ' AZN</strong>' : '');
+        $('#dp-out-warn').hidden = !(type === 'DEPOSIT_OUT' && n > bal.bottleBalance);
+      }
+
+      openModal(label + ' — ' + (c.name || ''),
+        '<div class="alert alert-info">Ümumi depozit: <strong>' + money(c.depositBalance || 0) + ' AZN</strong> · ' +
+          '<strong>' + (c.depositBottleBalance || 0) + ' bidon</strong></div>' +
+        '<div class="field"><span class="field-label">Su növü</span>' +
+          '<div class="seg" id="dp-water-seg">' +
+            '<button type="button" class="seg-btn is-on" data-v="FILTERED">Filtr suyu</button>' +
+            '<button type="button" class="seg-btn" data-v="SPRING">Bulaq suyu</button>' +
+          '</div></div>' +
+        '<div class="alert alert-info small" id="dp-hint"></div>' +
+        '<div class="alert alert-warn small" id="dp-out-warn" hidden>Bu su növündə müştərinin əlindəkindən çox bidon qaytarıla bilməz.</div>' +
+        moneyField('dp-amount', isAdjustment ? 'Məbləğ (mənfi də ola bilər)' : 'Məbləğ (AZN, boş buraxsanız avtomatik hesablanır)', '') +
+        '<label class="field"><span class="field-label">' +
+          (isAdjustment ? 'Bidon sayı (mənfi də ola bilər)' : 'Bidon sayı') + '</span>' +
+          '<input id="dp-bottles" type="number" step="1" value="0" /></label>' +
+        textField('dp-note', 'Qeyd / səbəb', ''),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+            var amount = $('#dp-amount').value.trim();
+            var bottles = $('#dp-bottles').value.trim() || '0';
+            var waterType = segWater();
+            var bal = typeBalance(waterType);
+            if (isAdjustment && (amount === '' || Number.isNaN(Number(amount)))) {
+              throw new Error('Düzəlişdə məbləğ düzgün yazılmalıdır.');
+            }
+            if (amount !== '' && Number.isNaN(Number(amount))) {
+              throw new Error('Məbləğ düzgün yazılmalıdır.');
+            }
+            if (!isAdjustment && Number(bottles) < 0) throw new Error('Bidon sayı mənfi ola bilməz.');
+            if (type === 'DEPOSIT_OUT') {
+              if (Number(bottles) > bal.bottleBalance) {
+                throw new Error(labelFor(waterType) + ' depozitində müştəridə ' + bal.bottleBalance +
+                  ' bidon var; ' + Number(bottles) + ' ədəd qaytarmaq olmaz.');
+              }
+              if (amount !== '' && Number(amount) > bal.balance) {
+                throw new Error(labelFor(waterType) + ' depozit balansı ' + money(bal.balance) + ' AZN-dir; ' +
+                  'daha çox qaytarmaq olmaz.');
+              }
+            }
+            return api('POST', '/deposits', {
+              idempotencyKey: idem('dep'),
+              customerId: c.id,
+              type: type,
+              waterType: waterType,
+              amount: amount === '' ? undefined : amount,
+              bottleCount: Number(bottles),
+              note: $('#dp-note').value.trim() || undefined,
+            }).then(function () {
+              closeModal();
+              toast('Depozit əməliyyatı yazıldı.', 'ok');
+              openCustomerDetail(c.id);
+            });
+          } },
+        ]);
+
+      $('#dp-water-seg').addEventListener('click', function (e) {
+        var b = e.target.closest('.seg-btn');
+        if (!b) return;
+        $$('#dp-water-seg .seg-btn').forEach(function (x) { x.classList.toggle('is-on', x === b); });
+        syncHint();
+      });
+      $('#dp-bottles').addEventListener('input', syncHint);
+      syncHint();
+    });
   }
 
   // -------------------------------------------------------- deposits -----
@@ -1831,14 +2053,28 @@
    */
   async function pageDeposits(view) {
     var f = DEPOSIT_FILTER;
-    var url = '/deposits?pageSize=100';
-    if (f.customerId) url += '&customerId=' + encodeURIComponent(f.customerId);
-    if (f.type) url += '&type=' + f.type;
-    if (f.from) url += '&from=' + encodeURIComponent(f.from);
-    if (f.to) url += '&to=' + encodeURIComponent(f.to);
+    function buildQuery(extra) {
+      var url = '/deposits?pageSize=' + (extra || 100);
+      if (f.customerId) url += '&customerId=' + encodeURIComponent(f.customerId);
+      if (f.type) url += '&type=' + f.type;
+      if (f.waterType) url += '&waterType=' + f.waterType;
+      if (f.from) url += '&from=' + encodeURIComponent(f.from);
+      if (f.to) url += '&to=' + encodeURIComponent(f.to);
+      return url;
+    }
 
-    var data = await api('GET', url);
-    var sums = await api('GET', '/deposits?pageSize=1');
+    var data = await api('GET', buildQuery(100));
+    var sums = await api('GET', buildQuery(1));
+    var customers = await api('GET', '/customers?pageSize=100');
+
+    var totals = (sums.totals && sums.totals.byType) || {};
+    var fT = totals.FILTERED || { amount: 0, bottleCount: 0 };
+    var sT = totals.SPRING || { amount: 0, bottleCount: 0 };
+
+    // Customers still holding company bottles are the deposit debtors.
+    var debtors = (customers.items || []).filter(function (c) {
+      return Number(c.depositBottleBalance || 0) > 0;
+    });
 
     var rows = (data.items || []).map(function (d) {
       var sign = d.amount > 0 ? '+' : d.amount < 0 ? '−' : '';
@@ -1846,6 +2082,7 @@
         dateTimeFull(d.occurredAt),
         '<button class="btn btn-outline btn-sm" data-dep-cust="' + d.customerId +
           '" data-dep-name="' + esc(d.customerName || '') + '">' + esc(d.customerName || '—') + '</button>',
+        waterBadge(d.waterType),
         depositBadge(d.type),
         sign + money(Math.abs(d.amount)) + ' AZN',
         (d.bottleCount > 0 ? '+' : '') + d.bottleCount,
@@ -1856,13 +2093,33 @@
       ];
     });
 
+    var debtorRows = debtors.map(function (c) {
+      var by = c.depositByType || {};
+      var bf = (by.FILTERED || {}).bottleBalance || 0;
+      var bs = (by.SPRING || {}).bottleBalance || 0;
+      return [
+        '<button class="btn btn-outline btn-sm" data-cust-open="' + c.id + '">' + esc(c.name) + '</button>',
+        esc(c.phone || '—'),
+        String(bf),
+        String(bs),
+        String(c.depositBottleBalance || 0),
+        money(c.depositBalance || 0) + ' AZN',
+        mapsLink(c.address, c.latitude, c.longitude),
+      ];
+    });
+
     view.innerHTML =
       '<div class="cards">' +
-        card('Depozitdə saxlanan', withMoney((sums.totals && sums.totals.amount) || 0), '') +
-        card('Depozit bidonları', (sums.totals && sums.totals.bottleCount) || 0, '') +
-        card('Hərəkət sayı', data.total || 0) +
+        card('Depozitdə saxlanan', withMoney((sums.totals && sums.totals.amount) || 0), 'accent') +
+        card('Filtr bidonları', fT.bottleCount, 'blue') +
+        card('Bulaq bidonları', sT.bottleCount, 'green') +
+        card('Depozit borclu müştəri', debtors.length, 'warn') +
       '</div>' +
       '<div class="toolbar">' +
+        '<select id="dep-water"><option value="">Bütün su növləri</option>' +
+          '<option value="FILTERED"' + (f.waterType === 'FILTERED' ? ' selected' : '') + '>Filtr suyu</option>' +
+          '<option value="SPRING"' + (f.waterType === 'SPRING' ? ' selected' : '') + '>Bulaq suyu</option>' +
+        '</select>' +
         '<select id="dep-type"><option value="">Bütün növlər</option>' +
           Object.keys(DEPOSIT_TYPE).map(function (k) {
             return '<option value="' + k + '"' + (f.type === k ? ' selected' : '') + '>' +
@@ -1873,12 +2130,20 @@
         '<input type="date" id="dep-to" value="' + esc(f.to || '') + '" />' +
         '<button class="btn btn-secondary" id="dep-filter">Filtr et</button>' +
         '<button class="btn btn-outline" id="dep-clear">Təmizlə</button>' +
+        '<div style="flex:1"></div>' +
+        '<button class="btn btn-outline" id="dep-settings">⚙️ Depozit qiyməti</button>' +
       '</div>' +
       '<div class="alert alert-info">Depozit pulu şirkətin saxladığı, hələ qazanmadığı məbləğdir: ' +
         'gəlir hesabına düşmür. Yalnız administrator depozit qəbul edə və qaytara bilər.</div>' +
+      panel('Depozit borclu müştərilər (' + debtors.length + ')', '',
+        table([
+          { label: 'Müştəri' }, { label: 'Telefon' }, { label: 'Filtr bidon', num: true },
+          { label: 'Bulaq bidon', num: true }, { label: 'Cəmi bidon', num: true },
+          { label: 'Depozit pulu', num: true }, { label: 'Ünvan' },
+        ], debtorRows, 'Depozit borclu müştəri yoxdur.'), true) +
       panel('Depozit tarixçəsi (' + (data.total || 0) + ')', '',
         table([
-          { label: 'Tarix / saat' }, { label: 'Müştəri' }, { label: 'Əməliyyat' },
+          { label: 'Tarix / saat' }, { label: 'Müştəri' }, { label: 'Su' }, { label: 'Əməliyyat' },
           { label: 'Məbləğ', num: true }, { label: 'Bidon', num: true },
           { label: 'Balans', num: true }, { label: 'Bidon balansı', num: true },
           { label: 'Qeyd' }, { label: 'Kim' },
@@ -1886,23 +2151,52 @@
 
     $('#dep-filter').addEventListener('click', function () {
       DEPOSIT_FILTER = {
-        customerId: '',
+        customerId: f.customerId || '',
         type: $('#dep-type').value,
+        waterType: $('#dep-water').value,
         from: $('#dep-from').value,
         to: $('#dep-to').value,
       };
       navigate('deposits');
     });
     $('#dep-clear').addEventListener('click', function () {
-      DEPOSIT_FILTER = { customerId: '', type: '', from: '', to: '' };
+      DEPOSIT_FILTER = { customerId: '', type: '', waterType: '', from: '', to: '' };
       navigate('deposits');
     });
+    $('#dep-settings').addEventListener('click', openDepositSettings);
     $$('#view button[data-dep-cust]').forEach(function (b) {
       b.addEventListener('click', function () { openCustomerDetail(b.dataset.depCust); });
     });
+    $$('#view button[data-cust-open]').forEach(function (b) {
+      b.addEventListener('click', function () { openCustomerDetail(b.dataset.custOpen); });
+    });
   }
 
-  var DEPOSIT_FILTER = { customerId: '', type: '', from: '', to: '' };
+  /** Admin sets the deposit charged per bottle, separately for Bulaq and Filtr. */
+  function openDepositSettings() {
+    api('GET', '/deposits/settings').then(function (p) {
+      openModal('Depozit qiyməti (bir bidon üçün)',
+        '<div class="alert alert-info">Bu qiymət yeni depozit qəbul ediləndə məbləği avtomatik hesablayır. ' +
+          'Mövcud əməliyyatlar dəyişmir — tarixçə həmişə qorunur.</div>' +
+        moneyField('ds-filtered', 'Filtr suyu bidonu (AZN)', String(p.FILTERED ?? 0)) +
+        moneyField('ds-spring', 'Bulaq suyu bidonu (AZN)', String(p.SPRING ?? 0)),
+        [
+          { label: 'Ləğv et', kind: 'outline' },
+          { label: 'Yadda saxla', kind: 'primary', onClick: function () {
+            return api('PUT', '/deposits/settings', {
+              FILTERED: $('#ds-filtered').value.trim() || '0',
+              SPRING: $('#ds-spring').value.trim() || '0',
+            }).then(function () {
+              closeModal();
+              toast('Depozit qiyməti yeniləndi.', 'ok');
+              navigate('deposits');
+            });
+          } },
+        ]);
+    });
+  }
+
+  var DEPOSIT_FILTER = { customerId: '', type: '', waterType: '', from: '', to: '' };
 
   // -------------------------------------------------------- deliveries --
   async function pageDeliveries(view) {
@@ -1918,6 +2212,7 @@
     var data = await api('GET', url);
 
     var rows = data.items.map(function (d) {
+      var dc = deliveryCoords(d);
       return [
         date(d.deliveredAt),
         esc(WATER[d.waterType] || d.waterType || '—'),
@@ -1930,7 +2225,8 @@
         money(d.debtAmount),
         confirmBadge(d),
         statusBadge(d.status),
-        '<button class="btn btn-outline btn-sm" data-id="' + d.id + '">Aç</button>',
+        '<button class="btn btn-outline btn-sm" data-id="' + d.id + '">Aç</button> ' +
+          mapButton(d.address, dc[0], dc[1], '📍'),
       ];
     });
 
@@ -2042,13 +2338,15 @@
           (d.confirmedByName ? ' · ' + esc(d.confirmedByName) : '')
         : '<span class="badge badge-warn">Gözləyir</span> · stok hələ çıxmayıb';
 
+    var dc = deliveryCoords(d);
+
     openModal('Çatdırılma · ' + date(d.deliveredAt),
       '<dl class="kv">' +
         '<dt>Müştəri</dt><dd>' + esc(d.customerName || '—') + '</dd>' +
         '<dt>İşçi</dt><dd>' + esc(d.workerName || '—') + '</dd>' +
         '<dt>Su</dt><dd>' + esc(WATER_FULL[d.waterType] || d.waterType) + '</dd>' +
         '<dt>Hara</dt><dd>' + destination + '</dd>' +
-        '<dt>Ünvan</dt><dd>' + esc(d.address) + '</dd>' +
+        '<dt>Ünvan</dt><dd>' + mapsLink(d.address, dc[0], dc[1]) + '</dd>' +
         '<dt>Bidon sayı</dt><dd>' + d.bottleCount + '</dd>' +
         '<dt>Bir bidon</dt><dd>' + (priceMissing ? '<span class="badge badge-warn">qiymət yazılmayıb</span>' : money(d.unitPrice) + ' AZN') + '</dd>' +
         '<dt>Ümumi</dt><dd>' + money(d.totalAmount) + ' AZN</dd>' +
@@ -2061,6 +2359,14 @@
       '</dl>' +
       (canConfirm
         ? '<div class="alert alert-info">Çatdırılma hələ təsdiqlənməyib. Bidonlar yalnız <strong>Təsdiqlə</strong> düyməsindən sonra işçinin balansından çıxır.</div>'
+        : '') +
+      (d.destinationType === 'HOME'
+        ? '<div class="toolbar" style="margin:0 0 12px">' +
+            mapButton(d.address, dc[0], dc[1], '📍 Google Maps marşrutu') +
+            (d.customerPhone
+              ? '<a class="btn btn-outline btn-sm" href="tel:' + esc(d.customerPhone) + '">📞 ' + esc(d.customerPhone) + '</a>'
+              : '') +
+          '</div>'
         : '') +
       (isAdmin() && d.status !== 'CANCELLED' && !d.isConfirmed
         ? '<div class="alert alert-info">Qiymət və ödəniş təsdiqdən sonra yazılır.</div>'
@@ -2238,6 +2544,7 @@ function newDeliveryForm() {
 
       '<label class="field" id="n-addr-wrap"><span class="field-label">Ünvan</span>' +
         '<input id="n-addr" placeholder="Məsələn: Bakı, Xəzər prospekti 12" /></label>' +
+      '<div id="n-map" class="small" style="margin:-6px 0 10px"></div>' +
 
       '<label class="field" id="n-cphone-wrap"><span class="field-label">Telefon</span>' +
         '<input id="n-cphone" placeholder="Müştəri telefonu" /></label>' +
@@ -2382,6 +2689,18 @@ function newDeliveryForm() {
     setDay(dayOffsetIso(0));
 
     var timer = null;
+    function refreshNewMap(addr, lat, lng) {
+      var el = $('#n-map');
+      if (!el) return;
+      var a = addr !== undefined ? addr : $('#n-addr').value.trim();
+      var la = lat !== undefined ? lat : ($('#n-picked').dataset.lat || null);
+      var ln = lng !== undefined ? lng : ($('#n-picked').dataset.lng || null);
+      el.innerHTML = mapsQuery(a, la, ln)
+        ? '<a target="_blank" rel="noopener" href="' + mapsRouteUrl(a, la, ln) + '">📍 Bu ünvanı xəritədə aç</a>'
+        : '';
+    }
+    $('#n-addr').addEventListener('input', function () { refreshNewMap(); });
+
     $('#n-search').addEventListener('input', function (e) {
       var v = e.target.value.trim();
       clearTimeout(timer);
@@ -2393,6 +2712,8 @@ function newDeliveryForm() {
               ? d.items.map(function (c) {
                   return '<div><a href="#" data-cid="' + c.id + '" data-cname="' + esc(c.name) +
                     '" data-caddr="' + esc(c.address || '') + '" data-cphone="' + esc(c.phone || '') +
+                    '" data-clat="' + (c.latitude == null ? '' : c.latitude) +
+                    '" data-clng="' + (c.longitude == null ? '' : c.longitude) +
                     '" style="display:block;padding:5px 0">' + esc(c.name) +
                     (c.phone ? ' · ' + esc(c.phone) : '') + '</a></div>';
                 }).join('')
@@ -2412,6 +2733,9 @@ function newDeliveryForm() {
                   var ph = $('#n-cphone');
                   if (ph) ph.value = a.dataset.cphone;
                 }
+                $('#n-picked').dataset.lat = a.dataset.clat || '';
+                $('#n-picked').dataset.lng = a.dataset.clng || '';
+                refreshNewMap(a.dataset.caddr, a.dataset.clat || null, a.dataset.clng || null);
               });
             });
           })

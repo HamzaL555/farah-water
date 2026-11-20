@@ -1,4 +1,4 @@
-import { DepositTxType, Prisma, Role } from '@prisma/client';
+import { DepositTxType, Prisma, Role, WaterType } from '@prisma/client';
 import { prisma } from '../prisma';
 import { badRequest, forbidden, notFound } from '../common/utils/errors';
 import { audit } from '../common/utils/audit';
@@ -15,16 +15,69 @@ const DEPOSIT_LABEL: Record<DepositTxType, string> = {
   ADJUSTMENT: 'Depozit düzəlişi',
 };
 
+const WATER_LABEL: Record<WaterType, string> = {
+  FILTERED: 'Filtr',
+  SPRING: 'Bulaq',
+};
+
 export interface DepositInput {
   customerId: string;
   type: DepositTxType;
-  /** Positive magnitude for IN/OUT; signed for ADJUSTMENT. */
-  amount: number;
+  /** Bulaq and Filtr deposits are separate accounts. Defaults to FILTERED. */
+  waterType?: WaterType;
+  /** Positive magnitude for IN/OUT; signed for ADJUSTMENT. Omit to price from settings. */
+  amount?: number;
   /** Positive magnitude for IN/OUT; signed for ADJUSTMENT. */
   bottleCount: number;
   note?: string | null;
   occurredAt?: Date;
   idempotencyKey?: string;
+}
+
+/** Configured deposit price per bottle, in AZN, per water type. */
+export interface DepositPrices {
+  FILTERED: number;
+  SPRING: number;
+}
+
+const DEPOSIT_PRICE_KEY = 'depositPrice';
+
+export async function getDepositPrices(): Promise<DepositPrices> {
+  const row = await prisma.appSetting.findUnique({ where: { key: DEPOSIT_PRICE_KEY } });
+  const v = (row?.value ?? {}) as Record<string, unknown>;
+  return {
+    FILTERED: Number(v.FILTERED) || 0,
+    SPRING: Number(v.SPRING) || 0,
+  };
+}
+
+/** Admin-only: how much one bottle's deposit is, per water type. */
+export async function setDepositPrices(input: DepositPrices, actor: Actor, req?: never) {
+  if (actor.role !== Role.ADMIN) {
+    throw forbidden('Depozit qiymətini yalnız administrator dəyişə bilər.');
+  }
+  const before = await getDepositPrices();
+  const value = {
+    FILTERED: round2(input.FILTERED).toNumber(),
+    SPRING: round2(input.SPRING).toNumber(),
+  };
+  await prisma.appSetting.upsert({
+    where: { key: DEPOSIT_PRICE_KEY },
+    create: { key: DEPOSIT_PRICE_KEY, value, updatedById: actor.id },
+    update: { value, updatedById: actor.id },
+  });
+  await audit({
+    actorId: actor.id,
+    actorName: actor.fullName,
+    actorRole: actor.role,
+    action: 'deposit.prices.updated',
+    entityType: 'app_setting',
+    entityId: DEPOSIT_PRICE_KEY,
+    before,
+    after: value,
+    req,
+  });
+  return value;
 }
 
 /**
@@ -52,11 +105,17 @@ function deltasFor(type: DepositTxType, amount: number, bottleCount: number) {
   const absAmount = round2(Math.abs(amount));
   const absBottles = Math.abs(Math.trunc(bottleCount));
   if (type === DepositTxType.DEPOSIT_IN) {
-    if (absAmount.lte(0)) throw badRequest('Qəbul edilən depozit məbləği sıfırdan böyük olmalıdır.');
+    // A deposit-free bottle handover is legitimate: bottles can be tracked
+    // with zero money when the company charges no deposit.
+    if (absAmount.lte(0) && absBottles === 0) {
+      throw badRequest('Qəbul edilən depozit məbləği və ya bidon sayı qeyd edilməlidir.');
+    }
     return { amount: absAmount, bottles: absBottles };
   }
   if (type === DepositTxType.DEPOSIT_OUT) {
-    if (absAmount.lte(0)) throw badRequest('Qaytarılan depozit məbləği sıfırdan böyük olmalıdır.');
+    if (absAmount.lte(0) && absBottles === 0) {
+      throw badRequest('Qaytarılan depozit məbləği və ya bidon sayı qeyd edilməlidir.');
+    }
     return { amount: absAmount.neg(), bottles: -absBottles };
   }
   // ADJUSTMENT: keep the caller's sign, but never allow a zero row.
@@ -68,6 +127,29 @@ function deltasFor(type: DepositTxType, amount: number, bottleCount: number) {
   return { amount: signedAmount, bottles: signedBottles };
 }
 
+type DepositBucket = { balance: number; bottleBalance: number };
+
+/** Per-water-type deposit state of one customer. */
+export async function getCustomerDepositByType(customerId: string, tx?: Prisma.TransactionClient) {
+  const db = tx ?? prisma;
+  const rows = await db.customerDeposit.groupBy({
+    by: ['waterType'],
+    where: { customerId },
+    _sum: { amount: true, bottleCount: true },
+  });
+  const out: Record<string, DepositBucket> = {
+    FILTERED: { balance: 0, bottleBalance: 0 },
+    SPRING: { balance: 0, bottleBalance: 0 },
+  };
+  for (const r of rows) {
+    out[r.waterType] = {
+      balance: moneyOut(r._sum.amount ?? 0),
+      bottleBalance: r._sum.bottleCount ?? 0,
+    };
+  }
+  return out;
+}
+
 /** Current deposit state of one customer, read straight from the ledger. */
 export async function getCustomerDepositSummary(customerId: string, tx?: Prisma.TransactionClient) {
   const db = tx ?? prisma;
@@ -77,25 +159,46 @@ export async function getCustomerDepositSummary(customerId: string, tx?: Prisma.
     _count: { _all: true },
     _max: { occurredAt: true },
   });
+  const byType = await getCustomerDepositByType(customerId, tx);
   return {
     balance: moneyOut(agg._sum.amount ?? 0),
     bottleBalance: agg._sum.bottleCount ?? 0,
     movements: agg._count._all,
     lastMovementAt: agg._max.occurredAt ?? null,
+    byType,
   };
 }
 
 /** Deposit balances for a page of customers, keyed by customer id. */
 export async function depositBalancesFor(customerIds: string[]) {
-  if (customerIds.length === 0) return new Map<string, { balance: number; bottleBalance: number }>();
+  if (customerIds.length === 0) return new Map<string, { balance: number; bottleBalance: number; byType: Record<string, DepositBucket> }>();
   const rows = await prisma.customerDeposit.groupBy({
-    by: ['customerId'],
+    by: ['customerId', 'waterType'],
     where: { customerId: { in: customerIds } },
     _sum: { amount: true, bottleCount: true },
   });
-  return new Map(
-    rows.map((r) => [r.customerId, { balance: moneyOut(r._sum.amount ?? 0), bottleBalance: r._sum.bottleCount ?? 0 }]),
-  );
+  const map = new Map<string, { balance: number; bottleBalance: number; byType: Record<string, DepositBucket> }>();
+  for (const id of customerIds) {
+    map.set(id, {
+      balance: 0,
+      bottleBalance: 0,
+      byType: {
+        FILTERED: { balance: 0, bottleBalance: 0 },
+        SPRING: { balance: 0, bottleBalance: 0 },
+      },
+    });
+  }
+  for (const r of rows) {
+    const entry = map.get(r.customerId)!;
+    const bucket = {
+      balance: moneyOut(r._sum.amount ?? 0),
+      bottleBalance: r._sum.bottleCount ?? 0,
+    };
+    entry.byType[r.waterType] = bucket;
+    entry.balance = moneyOut(round2(entry.balance).add(bucket.balance));
+    entry.bottleBalance += bucket.bottleBalance;
+  }
+  return map;
 }
 
 /**
@@ -112,7 +215,15 @@ export async function createDepositTx(input: DepositInput, actor: Actor, req?: n
   }
 
   const idempotencyKey = input.idempotencyKey ?? newIdempotencyKey();
-  const delta = deltasFor(input.type, Number(input.amount), Number(input.bottleCount));
+  const waterType = input.waterType ?? WaterType.FILTERED;
+  const bottleCount = Number(input.bottleCount) || 0;
+  let resolvedAmount = input.amount === undefined ? undefined : Number(input.amount);
+  // No amount typed: price the bottles from the configured deposit price.
+  if (resolvedAmount === undefined) {
+    const prices = await getDepositPrices();
+    resolvedAmount = round2(prices[waterType] * Math.abs(bottleCount)).toNumber();
+  }
+  const delta = deltasFor(input.type, resolvedAmount, bottleCount);
   const occurredAt = input.occurredAt ?? new Date();
 
   const customer = await prisma.customer.findUnique({
@@ -136,6 +247,22 @@ export async function createDepositTx(input: DepositInput, actor: Actor, req?: n
     });
     const beforeAmount = money(agg._sum.amount ?? 0);
     const beforeBottles = agg._sum.bottleCount ?? 0;
+
+    // Per-water-type guard: returning more Bulaq bottles than the customer
+    // received cannot be covered by their Filtr balance.
+    const typeAgg = await tx.customerDeposit.aggregate({
+      where: { customerId: customer.id, waterType },
+      _sum: { bottleCount: true },
+    });
+    const beforeTypeBottles = typeAgg._sum.bottleCount ?? 0;
+    const afterTypeBottles = beforeTypeBottles + delta.bottles;
+    if (afterTypeBottles < 0) {
+      throw badRequest(
+        `${WATER_LABEL[waterType]} depozitində müştəridə ${beforeTypeBottles} bidon var; ` +
+          `${Math.abs(delta.bottles)} ədəd qaytarmaq mümkün deyil.`,
+      );
+    }
+
     const afterAmount = round2(beforeAmount.add(delta.amount));
     const afterBottles = beforeBottles + delta.bottles;
 
@@ -153,6 +280,7 @@ export async function createDepositTx(input: DepositInput, actor: Actor, req?: n
         idempotencyKey,
         customerId: customer.id,
         type: input.type,
+        waterType,
         amount: delta.amount,
         bottleCount: delta.bottles,
         balanceAfter: afterAmount,
@@ -178,7 +306,7 @@ export async function createDepositTx(input: DepositInput, actor: Actor, req?: n
       action: input.type,
       title: DEPOSIT_LABEL[input.type],
       message:
-        `${customer.name}: ${sign}${moneyOut(row.amount).toFixed(2)} AZN, ` +
+        `${WATER_LABEL[waterType]} · ${customer.name}: ${sign}${moneyOut(row.amount).toFixed(2)} AZN, ` +
         `${row.bottleCount >= 0 ? '+' : ''}${row.bottleCount} bidon. ` +
         `Yeni balans: ${moneyOut(row.balanceAfter).toFixed(2)} AZN / ${row.bottleBalanceAfter} bidon.`,
       bottleCount: Math.abs(row.bottleCount),
@@ -219,6 +347,7 @@ export async function createDepositTx(input: DepositInput, actor: Actor, req?: n
 export interface ListDepositsQuery {
   customerId?: string;
   type?: DepositTxType;
+  waterType?: WaterType;
   preset?: DateRangePreset;
   from?: string;
   to?: string;
@@ -243,10 +372,11 @@ export async function listDeposits(query: ListDepositsQuery, actor: Actor) {
   const where: Prisma.CustomerDepositWhereInput = {
     ...(query.customerId ? { customerId: query.customerId } : {}),
     ...(query.type ? { type: query.type } : {}),
+    ...(query.waterType ? { waterType: query.waterType } : {}),
     ...(start || end ? { occurredAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
   };
 
-  const [rows, total, totals] = await Promise.all([
+  const [rows, total, totals, byTypeRows] = await Promise.all([
     prisma.customerDeposit.findMany({
       where,
       orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
@@ -259,13 +389,30 @@ export async function listDeposits(query: ListDepositsQuery, actor: Actor) {
     }),
     prisma.customerDeposit.count({ where }),
     prisma.customerDeposit.aggregate({ where, _sum: { amount: true, bottleCount: true } }),
+    prisma.customerDeposit.groupBy({
+      by: ['waterType'],
+      where,
+      _sum: { amount: true, bottleCount: true },
+    }),
   ]);
+
+  const byType: Record<string, { amount: number; bottleCount: number }> = {
+    FILTERED: { amount: 0, bottleCount: 0 },
+    SPRING: { amount: 0, bottleCount: 0 },
+  };
+  for (const r of byTypeRows) {
+    byType[r.waterType] = {
+      amount: moneyOut(r._sum.amount ?? 0),
+      bottleCount: r._sum.bottleCount ?? 0,
+    };
+  }
 
   return {
     ...paginate(rows.map((r) => serializeDeposit(r as never)), total, page, pageSize),
     totals: {
       amount: moneyOut(totals._sum.amount ?? 0),
       bottleCount: totals._sum.bottleCount ?? 0,
+      byType,
     },
   };
 }

@@ -67,6 +67,8 @@ export function serializeCustomer(customer: {
   name: string;
   phone: string | null;
   address: string;
+  latitude?: Prisma.Decimal | null;
+  longitude?: Prisma.Decimal | null;
   note: string | null;
   isActive: boolean;
   createdAt: Date;
@@ -81,6 +83,8 @@ export function serializeCustomer(customer: {
     name: customer.name,
     phone: customer.phone,
     address: customer.address,
+    latitude: customer.latitude == null ? null : Number(customer.latitude),
+    longitude: customer.longitude == null ? null : Number(customer.longitude),
     note: customer.note,
     isActive: customer.isActive,
     createdAt: iso(customer.createdAt),
@@ -118,8 +122,7 @@ type DeliveryRow = {
   cancelledAt: Date | null;
   cancelReason: string | null;
   createdAt: Date;
-  customer?: { id: string; name: string; phone: string | null; address: string } | null;
-  worker?: { id: string; fullName: string; username: string } | null;
+  customer?: { id: string; name: string; phone: string | null; address: string; latitude?: Prisma.Decimal | null; longitude?: Prisma.Decimal | null } | null;  worker?: { id: string; fullName: string; username: string } | null;
   company?: { id: string; name: string } | null;
   office?: { id: string; name: string } | null;
   confirmedBy?: { id: string; fullName: string } | null;
@@ -154,6 +157,9 @@ export function serializeDelivery(d: DeliveryRow) {
     createdAt: iso(d.createdAt),
     customerName: d.customer?.name ?? null,
     customerPhone: d.customer?.phone ?? null,
+    customerAddress: d.customer?.address ?? null,
+    customerLatitude: d.customer?.latitude == null ? null : Number(d.customer.latitude),
+    customerLongitude: d.customer?.longitude == null ? null : Number(d.customer.longitude),
     workerName: d.worker?.fullName ?? null,
     workerUsername: d.worker?.username ?? null,
     companyName: d.company?.name ?? null,
@@ -272,6 +278,7 @@ export function serializeDeposit(d: {
   id: string;
   customerId: string;
   type: string;
+  waterType?: string;
   amount: Prisma.Decimal;
   bottleCount: number;
   balanceAfter: Prisma.Decimal;
@@ -289,6 +296,7 @@ export function serializeDeposit(d: {
     customerName: d.customer?.name ?? null,
     customerPhone: d.customer?.phone ?? null,
     type: d.type,
+    waterType: d.waterType ?? 'FILTERED',
     amount: moneyOut(d.amount),
     bottleCount: d.bottleCount,
     balanceAfter: moneyOut(d.balanceAfter),

@@ -79,7 +79,8 @@ paths.forEach((p) => console.log('  ' + p));
 const htmlClasses = new Set(
   [...html.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].trim().split(/\s+/)).filter(Boolean),
 );
-const css = fs.readFileSync(path.join(WEB, 'styles.css'), 'utf8');
+const css = fs.readFileSync(path.join(WEB, 'styles.css'), 'utf8') +
+  '\n' + fs.readFileSync(path.join(WEB, 'theme-2026.css'), 'utf8');
 const unstyled = [...htmlClasses].filter((cl) => !new RegExp(`\\.${cl}(?![\\w-])`).test(css));
 console.log(`\nclasses used in html: ${htmlClasses.size}`);
 if (unstyled.length === 0) console.log('every class has a rule in styles.css');

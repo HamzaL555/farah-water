@@ -1,0 +1,229 @@
+/* =========================================================================
+   2026 THEME — modern management panel
+   Loaded after styles.css. It only overrides presentation: every class name
+   stays the same, so the behaviour layer in app.js is untouched.
+   ========================================================================= */
+:root {
+  --primary: #0f6fbd;
+  --primary-dark: #0a4d86;
+  --primary-light: #e8f2fd;
+  --success: #0f8a63;
+  --success-bg: #e2f7ee;
+  --danger: #d23c31;
+  --danger-bg: #fdeceb;
+  --warning: #b4761a;
+  --warning-bg: #fdf4e3;
+  --text: #14232e;
+  --muted: #64798a;
+  --border: #dbe5ee;
+  --surface: #ffffff;
+  --background: #f3f6fb;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(16, 42, 67, 0.06), 0 6px 20px rgba(16, 42, 67, 0.06);
+  --shadow-lg: 0 12px 40px rgba(16, 42, 67, 0.14);
+  --sidebar: #0d1b2a;
+  --sidebar-2: #122a40;
+}
+
+body {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, Tahoma, sans-serif;
+  background:
+    radial-gradient(1200px 500px at 12% -10%, #e7f1ff 0%, rgba(231, 241, 255, 0) 60%),
+    radial-gradient(900px 420px at 105% 0%, #e6fbf4 0%, rgba(230, 251, 244, 0) 55%),
+    var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------- sidebar --- */
+.sidebar {
+  width: 248px;
+  background: linear-gradient(185deg, var(--sidebar) 0%, var(--sidebar-2) 100%);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
+}
+.sidebar-brand {
+  font-size: 18px;
+  letter-spacing: 0.2px;
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.nav { padding: 10px 10px; }
+.nav a {
+  gap: 11px;
+  margin: 2px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 0;
+  color: #a9bed2;
+  font-size: 13.5px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.nav a:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.nav a.active {
+  background: linear-gradient(90deg, rgba(15, 111, 189, 0.95), rgba(15, 111, 189, 0.55));
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(15, 111, 189, 0.35);
+  font-weight: 600;
+}
+.sidebar-foot { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+
+/* ---------------------------------------------------------- topbar ---- */
+.topbar {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(219, 229, 238, 0.9);
+  padding: 12px 22px;
+}
+.page-title { font-size: 19px; letter-spacing: -0.2px; }
+.view { padding: 22px; max-width: 1600px; }
+
+/* ----------------------------------------------------------- cards ---- */
+.cards { gap: 14px; margin-bottom: 20px; }
+.card {
+  border: 1px solid rgba(219, 229, 238, 0.9);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  background: linear-gradient(180deg, #fff 0%, #fdfefe 100%);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.card-label { font-size: 12px; font-weight: 600; letter-spacing: 0.2px; text-transform: uppercase; }
+.card-value { font-size: 26px; letter-spacing: -0.5px; color: var(--text); }
+.card-value.sm { font-size: 19px; }
+.card.accent { border-top: 3px solid var(--primary); }
+.card.blue { border-top: 3px solid #2f80ed; }
+.card.green { border-top: 3px solid #0f8a63; }
+.card.warn { border-top: 3px solid #e2a03f; }
+
+/* ---------------------------------------------------------- panels ---- */
+.panel {
+  border: 1px solid rgba(219, 229, 238, 0.9);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+}
+.panel-head { padding: 14px 18px; background: #fbfdff; }
+.panel-head h3 { font-size: 15px; letter-spacing: -0.1px; }
+.panel-body { padding: 16px 18px; }
+
+/* ---------------------------------------------------------- tables ---- */
+th, td { padding: 11px 14px; }
+th {
+  background: #f4f8fc;
+  color: #3c5568;
+  font-size: 11.5px;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+tbody tr { transition: background 0.1s ease; }
+tbody tr:hover { background: #f7fbff; }
+tbody tr:last-child td { border-bottom: 0; }
+
+/* --------------------------------------------------------- buttons ---- */
+.btn {
+  border-radius: 9px;
+  padding: 9px 15px;
+  letter-spacing: 0.1px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn-primary {
+  background: linear-gradient(180deg, #157dcd, #0b5ea6);
+  box-shadow: 0 4px 14px rgba(15, 111, 189, 0.28);
+}
+.btn-primary:hover:not(:disabled) { background: linear-gradient(180deg, #1a86d8, #0a5494); }
+.btn-secondary { background: #e9f3fd; color: #0a4d86; }
+.btn-outline { background: #fff; }
+.btn-sm { border-radius: 8px; }
+
+/* ---------------------------------------------------------- fields ---- */
+input, select, textarea {
+  border-radius: 10px;
+  border-color: #d5e1ec;
+  padding: 10px 12px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  background: #fff;
+}
+input:hover, select:hover, textarea:hover { border-color: #b9ccdd; }
+
+/* --------------------------------------------------------- modals ----- */
+.modal { backdrop-filter: blur(3px); background: rgba(9, 24, 38, 0.55); }
+.modal-card { border-radius: 16px; box-shadow: 0 24px 70px rgba(6, 18, 30, 0.35); }
+.modal-head { padding: 16px 20px; }
+.modal-body { padding: 20px; }
+.modal-foot { padding: 14px 20px; background: #fbfdff; }
+
+/* ---------------------------------------------------------- alerts ---- */
+.alert { border-radius: 10px; line-height: 1.45; }
+.alert-warn { background: var(--warning-bg); color: var(--warning); border: 1px solid #f0dcb4; }
+
+/* ------------------------------------------------------ map buttons --- */
+.map-btn { border-color: #cfe3f6; background: #f4faff; color: #0a4d86; }
+.map-btn:hover { border-color: var(--primary); background: #e9f3fd; }
+
+/* --------------------------------------------------------- badges ----- */
+.badge { padding: 3px 10px; letter-spacing: 0.15px; }
+
+/* ------------------------------------------------------- responsive --- */
+@media (max-width: 860px) {
+  .sidebar { width: 240px; }
+  .view { padding: 14px; }
+  .card:hover { transform: none; }
+}
+
+/* ---------------------------------------------------------- charts ---- */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.chart { display: flex; flex-direction: column; gap: 10px; }
+.chart-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 104px;
+  align-items: center;
+  gap: 10px;
+}
+.chart-label {
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chart-track {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: #eef3f9;
+  overflow: hidden;
+}
+.chart-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #157dcd, #0b5ea6);
+  transition: width 0.4s ease;
+}
+.chart-fill.is-blue { background: linear-gradient(90deg, #3b8fe0, #1668b3); }
+.chart-fill.is-green { background: linear-gradient(90deg, #1aa87b, #0c7a58); }
+.chart-fill.is-amber { background: linear-gradient(90deg, #e3ae52, #c28422); }
+.chart-fill.is-negative { background: linear-gradient(90deg, #e05a4f, #b53328); }
+.chart-val {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1180px) {
+  .chart-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .chart-row { grid-template-columns: 96px minmax(0, 1fr) 84px; }
+  .chart-label, .chart-val { font-size: 11.5px; }
+}

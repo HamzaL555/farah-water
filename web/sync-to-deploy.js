@@ -10,7 +10,7 @@ const path = require('path');
 
 const SRC = 'C:/Users/user/Desktop/Farah/web';
 const DST = 'C:/Users/user/Desktop/Farah/backend/public/admin';
-const FILES = ['index.html', 'app.js', 'styles.css', 'manifest.webmanifest'];
+const FILES = ['index.html', 'app.js', 'styles.css', 'theme-2026.css', 'manifest.webmanifest'];
 const ASSETS = ['logo.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-32.png'];
 
 /** Copies one file, reporting only when the bytes actually differ. */

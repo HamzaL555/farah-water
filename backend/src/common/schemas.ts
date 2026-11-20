@@ -291,6 +291,10 @@ export const createCustomerSchema = z.object({
   address: z.string().trim().min(3, 'Ünvan ən azı 3 simvol olmalıdır.').max(400),
   phone: z.string().trim().max(30).optional(),
   note: z.string().trim().max(1000).optional(),
+  /// Optional pin so the map button opens the exact building rather than a
+  /// text search. Google Maps links need no API key.
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
 });
 
 export const listCustomersSchema = z.object({
@@ -303,11 +307,17 @@ export const listCustomersSchema = z.object({
   pageSize: intFromQuery(1, 100),
 });
 
-export const updateCustomerSchema = z.object({
-  phone: z.string().trim().max(30).nullable().optional(),
-  note: z.string().trim().max(1000).nullable().optional(),
-  isActive: z.boolean().optional(),
-});
+export const updateCustomerSchema = z
+  .object({
+    name: z.string().trim().min(2).max(150).optional(),
+    address: z.string().trim().min(3).max(400).optional(),
+    phone: z.string().trim().max(30).nullable().optional(),
+    note: z.string().trim().max(1000).nullable().optional(),
+    isActive: z.boolean().optional(),
+    latitude: z.coerce.number().min(-90).max(90).nullable().optional(),
+    longitude: z.coerce.number().min(-180).max(180).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Heç nə dəyişdirilmədi.' });
 
 // ------------------------------ users ---------------------------------
 
@@ -362,21 +372,34 @@ export const createDepositSchema = z
     idempotencyKey: z.string().min(8).max(100).optional(),
     customerId: z.string().uuid('Müştəri seçilməlidir.'),
     type: z.nativeEnum(DepositTxType),
-    amount: z.coerce.number().min(-1_000_000).max(1_000_000),
-    bottleCount: z.coerce.number().int().min(-100000).max(100000),
+    /// Bulaq and Filtr deposits are separate accounts.
+    waterType: z.nativeEnum(WaterType).default(WaterType.FILTERED),
+    /// Optional: when omitted the service prices the bottles from the
+    /// configured deposit price for this water type.
+    amount: z.coerce.number().min(-1_000_000).max(1_000_000).optional(),
+    bottleCount: z.coerce.number().int().min(-100000).max(100000).default(0),
     note: z.string().trim().max(500).optional(),
     occurredAt: z
       .string()
       .refine((v) => !Number.isNaN(Date.parse(v)), 'Tarix düzgün deyil.')
       .optional(),
   })
-  .refine((d) => Math.abs(d.amount) > 0 || d.bottleCount !== 0, {
+  .refine((d) => d.amount !== undefined || d.bottleCount !== 0, {
     message: 'Depozit məbləği və ya bidon sayı qeyd edilməlidir.',
+  })
+  .refine((d) => d.type !== DepositTxType.ADJUSTMENT || d.amount !== undefined, {
+    message: 'Düzəlişdə məbləğ yazılmalıdır.',
   });
+
+export const depositSettingsSchema = z.object({
+  FILTERED: z.coerce.number().min(0).max(1000),
+  SPRING: z.coerce.number().min(0).max(1000),
+});
 
 export const listDepositsSchema = z.object({
   customerId: z.string().uuid().optional(),
   type: z.nativeEnum(DepositTxType).optional(),
+  waterType: z.nativeEnum(WaterType).optional(),
   preset: rangePreset,
   from: dateFromQuery,
   to: dateFromQuery,

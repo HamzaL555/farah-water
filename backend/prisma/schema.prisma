@@ -194,6 +194,11 @@ model Customer {
   name      String
   phone     String?
   address   String
+  /// Optional pin for the address. When both are set the panel builds a
+  /// precise Google Maps route link; otherwise it falls back to the address
+  /// text. Nothing here calls the paid Geocoding API.
+  latitude  Decimal? @db.Decimal(9, 6)
+  longitude Decimal? @db.Decimal(9, 6)
   note      String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -394,6 +399,10 @@ model CustomerDeposit {
   idempotencyKey     String        @unique
   customerId         String
   type               DepositTxType
+  /// Which water the bottles held. Bulaq and Filtr deposits are tracked
+  /// separately so a refund can never hand back bottles the customer never
+  /// received. Legacy rows default to FILTERED.
+  waterType          WaterType     @default(FILTERED)
   amount             Decimal       @db.Decimal(12, 2)
   bottleCount        Int
   balanceAfter       Decimal       @db.Decimal(12, 2)
@@ -407,6 +416,7 @@ model CustomerDeposit {
   createdBy User     @relation("DepositCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
 
   @@index([customerId, occurredAt])
+  @@index([customerId, waterType, occurredAt])
   @@index([occurredAt])
   @@map("customer_deposits")
 }

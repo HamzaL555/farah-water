@@ -59,6 +59,8 @@ export interface Customer {
   name: string;
   phone: string | null;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
   note: string | null;
   isActive: boolean;
   createdAt: string | null;
@@ -82,6 +84,8 @@ export interface CustomerDeposit {
   customerName: string | null;
   customerPhone: string | null;
   type: DepositTxType;
+  /** Bulaq and Filtr deposits are separate accounts. */
+  waterType: WaterType;
   /** Signed: positive money in, negative money refunded/adjusted away. */
   amount: number;
   bottleCount: number;
@@ -133,6 +137,9 @@ export interface Delivery {
   createdAt: string | null;
   customerName: string | null;
   customerPhone: string | null;
+  customerAddress: string | null;
+  customerLatitude: number | null;
+  customerLongitude: number | null;
   workerName: string | null;
   workerUsername: string | null;
   companyName: string | null;

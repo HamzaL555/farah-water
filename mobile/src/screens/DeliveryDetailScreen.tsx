@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl, Text } from 'react-native';
+import { View, ScrollView, StyleSheet, RefreshControl, Text, Pressable, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
@@ -303,6 +303,35 @@ export const DeliveryDetailScreen: React.FC<Props> = ({ route }) => {
             }
           />
           <KeyValueRow label="Əlaqə nömrəsi" value={data.contactPhone ?? data.customerPhone ?? '-'} />
+          <KeyValueRow label="Ünvan" value={data.address} />
+          <View style={styles.mapRow}>
+            <Pressable
+              style={styles.mapBtn}
+              onPress={() => {
+                // The delivery carries an address snapshot; the pin lives on
+                // the customer and may have moved since. Only trust the pin
+                // while both still describe the same place.
+                const sameAddress = data.customerAddress != null && data.customerAddress === data.address;
+                const destination =
+                  sameAddress && data.customerLatitude != null && data.customerLongitude != null
+                    ? `${data.customerLatitude},${data.customerLongitude}`
+                    : data.address;
+                void Linking.openURL(
+                  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`,
+                );
+              }}
+            >
+              <Text style={styles.mapBtnText}>Google Maps ilə marşrut</Text>
+            </Pressable>
+            {(data.contactPhone ?? data.customerPhone) ? (
+              <Pressable
+                style={[styles.mapBtn, styles.callBtn]}
+                onPress={() => void Linking.openURL(`tel:${data.contactPhone ?? data.customerPhone}`)}
+              >
+                <Text style={styles.mapBtnText}>Zəng et</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <KeyValueRow label="Bidon sayı" value={String(data.bottleCount)} />
           <KeyValueRow
             label="Bir bidonun qiyməti"
@@ -715,6 +744,16 @@ const styles = StyleSheet.create({
   scroll: { padding: spacing.md, paddingBottom: spacing.xxl },
   chipRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
   date: { fontSize: 12, color: colors.textMuted },
+  mapRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  mapBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  callBtn: { backgroundColor: colors.success },
+  mapBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   row: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   actionButton: { flexGrow: 1 },

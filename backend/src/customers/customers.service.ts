@@ -12,6 +12,8 @@ export interface CreateCustomerInput {
   address: string;
   phone?: string | null;
   note?: string | null;
+  latitude?: number;
+  longitude?: number;
 }
 
 export async function createCustomer(input: CreateCustomerInput, actor: Actor, req?: never) {
@@ -32,7 +34,14 @@ export async function createCustomer(input: CreateCustomerInput, actor: Actor, r
   }
 
   const customer = await prisma.customer.create({
-    data: { name, address, phone: input.phone?.trim() || null, note: input.note?.trim() || null },
+    data: {
+      name,
+      address,
+      phone: input.phone?.trim() || null,
+      note: input.note?.trim() || null,
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+    },
   });
 
   await audit({
@@ -126,6 +135,10 @@ export async function listCustomers(
       }),
       depositBalance: dep?.balance ?? 0,
       depositBottleBalance: dep?.bottleBalance ?? 0,
+      depositByType: dep?.byType ?? {
+        FILTERED: { balance: 0, bottleBalance: 0 },
+        SPRING: { balance: 0, bottleBalance: 0 },
+      },
     };
   });
 
@@ -193,6 +206,7 @@ export async function getCustomerDetail(id: string, actor: Actor) {
     ...base,
     depositBalance: depositSummary.balance,
     depositBottleBalance: depositSummary.bottleBalance,
+    depositByType: depositSummary.byType,
     depositMovements: depositSummary.movements,
     deposits: depositRows.map((r) => serializeDeposit(r as never)),
   };
@@ -200,19 +214,31 @@ export async function getCustomerDetail(id: string, actor: Actor) {
 
 export async function updateCustomer(
   id: string,
-  patch: { name?: string; address?: string; phone?: string | null; note?: string | null; isActive?: boolean },
+  patch: {
+    name?: string;
+    address?: string;
+    phone?: string | null;
+    note?: string | null;
+    isActive?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+  },
   actor: Actor,
   req?: never,
 ) {
   const before = await prisma.customer.findUnique({ where: { id } });
   if (!before) throw notFound('Müştəri tapılmadı.');
 
-  // Renaming/re-addressing would rewrite history on past deliveries, so only
-  // contact details and the active flag are editable.
+  // A delivery keeps its own address snapshot, so editing the customer's
+  // address only affects future deliveries - past rows are untouched.
   const data: Prisma.CustomerUpdateInput = {};
+  if (patch.name !== undefined) data.name = patch.name.trim();
+  if (patch.address !== undefined) data.address = patch.address.trim();
   if (patch.phone !== undefined) data.phone = patch.phone?.trim() || null;
   if (patch.note !== undefined) data.note = patch.note?.trim() || null;
   if (patch.isActive !== undefined) data.isActive = patch.isActive;
+  if (patch.latitude !== undefined) data.latitude = patch.latitude;
+  if (patch.longitude !== undefined) data.longitude = patch.longitude;
 
   const customer = await prisma.customer.update({ where: { id }, data });
 
