@@ -11,8 +11,11 @@
   'use strict';
 
   // ------------------------------------------------------------ config --
+  // Same-origin by default: the panel is always served by the API host, so a
+  // preview deployment must call its own API, never production. An explicit
+  // FARAH_API_URL stays available for local experiments.
   var API =
-    (window.FARAH_API_URL || 'https://farah-water.vercel.app/api/v1').replace(/\/$/, '');
+    (window.FARAH_API_URL || (location.origin + '/api/v1')).replace(/\/$/, '');
 
   /** True when the signed-in account is the owner. Several screens gate on it. */
   var isAdmin = function () {
@@ -1914,27 +1917,39 @@
 
   /** Edit the address/phone/pin. Past deliveries keep their own snapshot. */
   function customerEditForm(c) {
+    var admin = isAdmin();
+    // Identity fields are administrator-only on the server. A worker still gets
+    // a usable form, just limited to the contact details they are allowed to fix.
+    var identity = admin
+      ? textField('ce-name', 'Ad, Soyad', c.name || '') +
+        textField('ce-addr', 'Ünvan', c.address || '', { multiline: true }) +
+        textField('ce-lat', 'En dairəsi (latitude, istəyə bağlı)', c.latitude == null ? '' : String(c.latitude)) +
+        textField('ce-lng', 'Uzunluq (longitude, istəyə bağlı)', c.longitude == null ? '' : String(c.longitude)) +
+        '<div class="alert alert-info small">Koordinatları Google Maps-də ünvana sağ klik → ' +
+          '“What’s here?” ilə götürüb buraya yazsanız, marşrut dəqiq qapıya aparacaq.</div>'
+      : '<div class="alert alert-info small">Ad, ünvan və koordinatları yalnız administrator dəyişə bilər. ' +
+          'Siz telefon nömrəsini və qeydi yeniləyə bilərsiniz.</div>';
+
     openModal('Müştəri redaktəsi — ' + (c.name || ''),
-      textField('ce-name', 'Ad, Soyad', c.name || '') +
+      identity +
       textField('ce-phone', 'Telefon', c.phone || '', { type: 'tel' }) +
-      textField('ce-addr', 'Ünvan', c.address || '', { multiline: true }) +
-      textField('ce-lat', 'En dairəsi (latitude, istəyə bağlı)', c.latitude == null ? '' : String(c.latitude)) +
-      textField('ce-lng', 'Uzunluq (longitude, istəyə bağlı)', c.longitude == null ? '' : String(c.longitude)) +
-      '<div class="alert alert-info small">Koordinatları Google Maps-də ünvana sağ klik → ' +
-        '“What’s here?” ilə götürüb buraya yazsanız, marşrut dəqiq qapıya aparacaq.</div>',
+      textField('ce-note', 'Qeyd', c.note || ''),
       [
         { label: 'Ləğv et', kind: 'outline' },
         { label: 'Yadda saxla', kind: 'primary', onClick: function () {
-          var lat = $('#ce-lat').value.trim();
-          var lng = $('#ce-lng').value.trim();
           var body = {
-            name: $('#ce-name').value.trim(),
             phone: $('#ce-phone').value.trim() || null,
-            address: $('#ce-addr').value.trim(),
-            latitude: lat === '' ? null : Number(lat),
-            longitude: lng === '' ? null : Number(lng),
+            note: $('#ce-note').value.trim() || null,
           };
-          if (body.address.length < 3) throw new Error('Ünvan yazılmalıdır.');
+          if (admin) {
+            var lat = $('#ce-lat').value.trim();
+            var lng = $('#ce-lng').value.trim();
+            body.name = $('#ce-name').value.trim();
+            body.address = $('#ce-addr').value.trim();
+            body.latitude = lat === '' ? null : Number(lat);
+            body.longitude = lng === '' ? null : Number(lng);
+            if (body.address.length < 3) throw new Error('Ünvan yazılmalıdır.');
+          }
           return api('PATCH', '/customers/' + c.id, body).then(function () {
             closeModal();
             toast('Müştəri yeniləndi.', 'ok');
@@ -1989,7 +2004,13 @@
           '</div></div>' +
         '<div class="alert alert-info small" id="dp-hint"></div>' +
         '<div class="alert alert-warn small" id="dp-out-warn" hidden>Bu su növündə müştərinin əlindəkindən çox bidon qaytarıla bilməz.</div>' +
-        moneyField('dp-amount', isAdjustment ? 'Məbləğ (mənfi də ola bilər)' : 'Məbləğ (AZN, boş buraxsanız avtomatik hesablanır)', '') +
+        // Left empty on purpose: the placeholder tells the user the server
+        // will price the bottles, while typing 0 still means a free handover.
+        '<label class="field"><span class="field-label">' +
+          (isAdjustment
+            ? 'Məbləğ (AZN, mənfi də ola bilər)'
+            : 'Məbləğ (AZN, boş buraxsanız avtomatik hesablanır)') + '</span>' +
+          '<input id="dp-amount" type="text" inputmode="decimal" value="" placeholder="avtomatik" /></label>' +
         '<label class="field"><span class="field-label">' +
           (isAdjustment ? 'Bidon sayı (mənfi də ola bilər)' : 'Bidon sayı') + '</span>' +
           '<input id="dp-bottles" type="number" step="1" value="0" /></label>' +

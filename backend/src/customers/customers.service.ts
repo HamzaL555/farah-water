@@ -1,6 +1,6 @@
 import { DeliveryStatus, Prisma, Role } from '@prisma/client';
 import { prisma } from '../prisma';
-import { badRequest, notFound } from '../common/utils/errors';
+import { badRequest, forbidden, notFound } from '../common/utils/errors';
 import { audit } from '../common/utils/audit';
 import { paginate, serializeCustomer, serializeDelivery, serializeDeposit } from '../common/utils/serialize';
 import { resolveRange, DateRangePreset } from '../common/utils/date';
@@ -228,6 +228,19 @@ export async function updateCustomer(
 ) {
   const before = await prisma.customer.findUnique({ where: { id } });
   if (!before) throw notFound('Müştəri tapılmadı.');
+
+  // A worker may correct a phone number or leave a note, but the identity of
+  // the customer (name, address, pin, active flag) changes where every future
+  // delivery goes, so only an administrator may rewrite it.
+  const structural =
+    patch.name !== undefined ||
+    patch.address !== undefined ||
+    patch.latitude !== undefined ||
+    patch.longitude !== undefined ||
+    patch.isActive !== undefined;
+  if (structural && actor.role !== Role.ADMIN) {
+    throw forbidden('Ad, ünvan və koordinatları yalnız administrator dəyişə bilər.');
+  }
 
   // A delivery keeps its own address snapshot, so editing the customer's
   // address only affects future deliveries - past rows are untouched.
